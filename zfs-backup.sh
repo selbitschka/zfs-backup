@@ -9,6 +9,10 @@ readonly EXIT_OK=0
 readonly EXIT_ERROR=1
 readonly EXIT_MISSING_PARAM=2
 readonly EXIT_INVALID_PARAM=3
+# readonly parameter
+readonly ID_LENGTH=10
+readonly TYPE_LOCAL=local
+readonly TYPE_SSH=ssh
 
 # ZFS commands
 # we try to autodetect but in case these variables can be set
@@ -20,7 +24,7 @@ ZFS_CMD_REMOTE=
 ZPOOL_CMD_REMOTE=
 
 # defaults
-CONFIG_FILE=./zfs-backup.config
+CONFIG_FILE=
 LOG_FILE=
 LOG_DATE_PATTERN="%Y-%m-%d - %H:%M:%S"
 LOG_DEBUG="[DEBUG]"
@@ -28,18 +32,12 @@ LOG_INFO="[INFO]"
 LOG_WARN="[WARN]"
 LOG_ERROR="[ERROR]"
 LOG_CMD="[COMMAND]"
-DEBUG=false
-DRYRUN=false
 SNAPSHOT_PREFIX="bkp"
 SNAPSHOT_HOLD_TAG="zfsbackup"
 SNAPSHOT_SYNCED_POSTFIX="synced"
 
-ID=
-readonly ID_LENGTH=10
-readonly TYPE_LOCAL=local
-readonly TYPE_SSH=ssh
-
 # datasets
+ID=
 SRC_DATASET=
 SRC_TYPE=$TYPE_LOCAL
 SRC_ENCRYPTED=false
@@ -65,6 +63,9 @@ MOUNT=false
 BOOKMARK=false
 NO_OVERRIDE=false
 NO_HOLD=false
+MAKE_CONFIG=false
+DEBUG=false
+DRYRUN=false
 
 # parameter
 DEFAULT_SEND_PARAMETER="-Lec"
@@ -80,6 +81,32 @@ SSH_OPT="-o ConnectTimeout=10"
 #SSH_OPT="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 
 FIRST_RUN=false
+
+# help text
+readonly SRC_DATASET_HELP="Name of the sending dataset (source)."
+readonly SRC_TYPE_HELP="Type of source dataset: '$TYPE_LOCAL' or '$TYPE_LOCAL' (default: local)."
+readonly SRC_COUNT_HELP="Number (greater 0) of successful sent snapshots to keep on source side (default: 1)."
+readonly DST_DATASET_HELP="Name of the receiving dataset (destination)."
+readonly DST_TYPE_HELP="Type of destination dataset (default: 'local')."
+readonly DST_COUNT_HELP="Number (greater 0) of successful received snapshots to keep on destination side (default: 1)."
+
+readonly SSH_HOST_HELP="Host to connect to."
+readonly SSH_PORT_HELP="Port to use (default: 22)."
+readonly SSH_USER_HELP="User used for connection. If not set current user is used."
+readonly SSH_KEY_HELP="Key to use for connection. If not set default key is used."
+readonly SSH_OPT_HELP="Options used for connection (i.e: '-oStrictHostKeyChecking=accept-new')."
+
+readonly SEND_PARAMETER_HELP="Parameters used for 'zfs send' command. If set these parameters are use and all other settings (see below) are ignored."
+readonly RECEIVE_PARAMETER_HELP="Parameters used for 'zfs receive' command. If set these parameters are use and all other settings (see below) are ignored."
+
+readonly BOOKMARK_HELP="Use bookmark (if supported) instead of snapshot on source dataset. Ignored if '-ss, --src-count' is greater 1."
+readonly RESUME_HELP="Make sync resume able and resume interrupted streams. User '-s' option during receive."
+readonly MOUNT_HELP="Try to mount received dataset on destination. Option '-u' is NOT used during receive."
+readonly INTERMEDIATE_HElP=("Use '-I' instead of '-i' while sending to keep intermediary snapshots." "If set, created but not send snapshots are kept, otherwise they are deleted.")
+readonly NO_OVERRIDE_HElP=("By default option '-F' is used during receive to discard changes made in destination dataset." "If you use this option receive will fail if destination was changed.")
+readonly DECRYPT_HElP=("By default encrypted source datasets are send in raw format using send option '-w'." "This options disables that and sends encrypted (mounted) datasets in plain.")
+readonly NO_HOLD_HELP="Do not put hold tag on snapshots created by this tool."
+readonly DEBUG_HELP="Print executed commands and other debugging information."
 
 usage() {
   local usage
@@ -99,39 +126,36 @@ help() {
   help="
 Help:
 =====
-Config
-------
-  -c,  --config [file]     Config file to load parameter from (default: $CONFIG_FILE).
-  -v,  --verbose           Print executed commands and other debugging information.
-  --dryrun                 Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
-  --version                Print version.
+Parameters
+----------
+  -c,  --config    [file]        Config file to load parameter from (default: $CONFIG_FILE).
+  --create-config                Create a config file base on given commandline parameters.
+                                 If a config file ('-c') is use the output is written to that file.
 
-Options
--------
-  -s,  --src       [name]        Name of the sending dataset (source).
-  -st, --src-type  [ssh|local]   Type of source dataset (default: local)
-  -ss, --src-snaps [count]       Number (greater 0) of successful sent snapshots to keep on source side (default: 1).
-  -d,  --dst       [name]        Name of the receiving dataset (destination).
-  -dt, --dst-type  [ssh|local]   Type of destination dataset (default: 'local').
-  -ds, --dst-snaps [count]       Number (greater 0) of successful received snapshots to keep on destination side (default: 1).
+  -s,  --src       [name]        $SRC_DATASET_HELP
+  -st, --src-type  [ssh|local]   $SRC_TYPE_HELP
+  -ss, --src-snaps [count]       $SRC_COUNT_HELP
+  -d,  --dst       [name]        $DST_DATASET_HELP
+  -dt, --dst-type  [ssh|local]   $DST_TYPE_HELP
+  -ds, --dst-snaps [count]       $DST_COUNT_HELP
   -i,  --id        [name]        Unique ID of backup destination (default: md5sum of destination dataset and ssh host, if present).
-                                 Required if you use multiple destinations to identify snapshots.
-                                 Maximum of $ID_LENGTH characters or numbers.
-  --send-param     [parameters]  Parameters used for 'zfs send' command. If set these parameters are use and all other
-                                 settings (see below) are ignored.
-  --recv-param     [parameters]  Parameters used for 'zfs receive' command. If set these parameters are use and all other
-                                 settings (see below) are ignored.
-  --bookmark                     Use bookmark (if supported) instead of snapshot on source dataset.
-                                 Ignored if '-ss, --src-count' is greater 1.
-  --resume                       Make sync resume able and resume interrupted streams. User '-s' option during receive.
-  --intermediary                 Use '-I' instead of '-i' while sending to keep intermediary snapshots.
-                                 If set created but not send snapshots are kept, otherwise the are deleted.
-  --mount                        Try to mount received dataset on destination. Option '-u' is NOT used during receive.
-  --no-override                  By default option '-F' is used during receive to discard changes made in destination dataset.
-                                 If you use this option receive will fail if destination was changed.
-  --decrypt                      By default encrypted source datasets are send in raw format using send option '-w'.
-                                 This options disables that and sends encrypted (mounted) datasets in plain.
-  --no-holds                     Do not put hold tag on snapshots created by this tool.
+                                 Required if you use multiple destinations to identify snapshots. Maximum of $ID_LENGTH characters or numbers.
+  --send-param     [parameters]  $SEND_PARAMETER_HELP
+  --recv-param     [parameters]  $RECEIVE_PARAMETER_HELP
+  --bookmark                     $BOOKMARK_HELP
+  --resume                       $RESUME_HELP
+  --intermediary                 ${INTERMEDIATE_HElP[0]}
+                                 ${INTERMEDIATE_HElP[1]}
+  --mount                        $MOUNT_HELP
+  --no-override                  ${NO_OVERRIDE_HElP[0]}
+                                 ${NO_OVERRIDE_HElP[1]}
+  --decrypt                      ${DECRYPT_HElP[0]}
+                                 ${DECRYPT_HElP[1]}
+  --no-holds                     $NO_HOLD_HELP
+
+  -v,  --verbose                 $DEBUG_HELP
+  --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
+  --version                      Print version.
 
 Types:
 ------
@@ -141,11 +165,11 @@ Types:
 SSH Options
 -----------
 If you use type 'ssh' you need to specify Host, Port, etc.
- --ssh_host [hostname]          Host to connect to.
- --ssh_port [port]              Port to use (default: 22).
- --ssh_user [port]              User used for connection. If not set current user is used.
- --ssh_key  [keyfile]           Key to use for connection. If not set default key is used.
- --ssh_opt  [options]           Options used for connection (i.e: '-oStrictHostKeyChecking=accept-new').
+ --ssh_host [hostname]          $SSH_HOST_HELP
+ --ssh_port [port]              $SSH_PORT_HELP
+ --ssh_user [username]          $SSH_USER_HELP
+ --ssh_key  [keyfile]           $SSH_KEY_HELP
+ --ssh_opt  [options]           $SSH_OPT_HELP
 
 Help
 ----
@@ -187,6 +211,10 @@ while [[ $# -gt 0 ]]; do
   -c | --config)
     CONFIG_FILE="$2"
     shift
+    shift
+    ;;
+  --create-config)
+    MAKE_CONFIG=true
     shift
     ;;
   -i | --id)
@@ -368,7 +396,9 @@ function log_error() {
 }
 
 function log_cmd() {
-  log "executing: '$1'" "$LOG_CMD"
+  if [ "$DEBUG" == "true" ]; then
+    log "executing: '$1'" "$LOG_CMD"
+  fi
 }
 
 # date utility functions
@@ -390,7 +420,7 @@ function date_compare() {
 }
 
 function load_config() {
-  if [ -f "$CONFIG_FILE" ]; then
+  if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     # shellcheck disable=SC1090
     . "$CONFIG_FILE"
   fi
@@ -1269,8 +1299,115 @@ function execute() {
   fi
 }
 
+function create_config() {
+  local config
+  config="#######
+## Config generated by zfs-backup $VERSION at $(date +"$LOG_DATE_PATTERN") ##
+#######
+
+## ZFS commands
+# The script is trying to find the right path
+# but you can set it if it fails
+ZFS_CMD=$ZFS_CMD
+ZPOOL_CMD=$ZPOOL_CMD
+SSH_CMD=$SSH_CMD
+MD5SUM_CMD=$MD5SUM_CMD
+ZFS_CMD_REMOTE=$ZFS_CMD_REMOTE
+ZPOOL_CMD_REMOTE=$ZFS_CMD_REMOTE
+
+# Unique id of target system for example 'nas' of 'home'
+# This id is used to separate backups of the same source
+# to multiple targets.
+# If this is not set the id is auto generated to the
+# md5sum of destination dataset and ssh host (if present).
+# Use only A-Za-z0-9 and maximum of $ID_LENGTH characters.
+#ID=
+
+## Source dataset options
+# $SRC_DATASET_HELP
+SRC_DATASET=\"$SRC_DATASET\"
+# $SRC_TYPE_HELP
+SRC_TYPE=$SRC_TYPE
+# ${DECRYPT_HElP[0]}
+# ${DECRYPT_HElP[1]}
+SRC_DECRYPT=$SRC_DECRYPT
+# $SRC_COUNT_HELP
+SRC_COUNT=$SRC_COUNT
+
+## Destination dataset options
+# $DST_DATASET_HELP
+DST_DATASET=\"$DST_DATASET\"
+# $DST_TYPE_HELP
+DST_TYPE=$TYPE_LOCAL
+# $DST_COUNT_HELP
+DST_COUNT=$DST_COUNT
+
+# Snapshot pre-/postfix and hold tag
+#SNAPSHOT_PREFIX=\"bkp\"
+#SNAPSHOT_HOLD_TAG=\"zfsbackup\"
+#SNAPSHOT_SYNCED_POSTFIX=\"synced\"
+
+## SSH parameter
+# $SSH_HOST_HELP
+SSH_HOST=\"$SSH_HOST\"
+# $SSH_PORT_HELP
+SSH_PORT=\"$SSH_PORT\"
+# $SSH_USER_HELP
+SSH_USER=\"$SSH_USER\"
+# $SSH_KEY_HELP
+SSH_KEY=\"$SSH_KEY\"
+# $SSH_OPT_HELP
+# SSH_OPT=\"-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new\"
+SSH_OPT=\"$SSH_OPT\"
+
+# Backup style configuration
+# $BOOKMARK_HELP
+BOOKMARK=$BOOKMARK
+# $RESUME_HELP
+RESUME=$RESUME
+# ${INTERMEDIATE_HElP[0]}
+# ${INTERMEDIATE_HElP[1]}
+INTERMEDIATE=$INTERMEDIATE
+# $MOUNT_HELP
+MOUNT=$MOUNT
+# ${NO_OVERRIDE_HElP[0]}
+# ${NO_OVERRIDE_HElP[1]}
+NO_OVERRIDE=$NO_OVERRIDE
+# $NO_HOLD_HELP
+NO_HOLD=$NO_HOLD
+# $DEBUG_HELP
+DEBUG=false
+
+# $SEND_PARAMETER_HELP
+SEND_PARAMETER=\"$SEND_PARAMETER\"
+# $RECEIVE_PARAMETER_HELP
+RECEIVE_PARAMETER=\"$RECEIVE_PARAMETER\"
+
+# Logging options
+#LOG_FILE=
+#LOG_DATE_PATTERN=\"%Y-%m-%d - %H:%M:%S\"
+#LOG_DEBUG=\"[DEBUG]\"
+#LOG_INFO=\"[INFO]\"
+#LOG_WARN=\"[WARN]\"
+#LOG_ERROR=\"[ERROR]\"
+#LOG_CMD=\"[COMMAND]\"
+"
+  if [ -n "$CONFIG_FILE" ]; then
+    echo "$config" >$CONFIG_FILE
+    echo "Configuration was written to $CONFIG_FILE."
+  else
+    echo "$config"
+  fi
+}
+
 # main function calls
-load_config
-distro_dependent_commands
-validate
-do_backup
+if [ "$MAKE_CONFIG" == "true" ]; then
+  distro_dependent_commands
+  validate
+  create_config
+else
+  load_config
+  distro_dependent_commands
+  validate
+  do_backup
+fi
