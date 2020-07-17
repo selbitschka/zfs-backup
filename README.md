@@ -76,6 +76,12 @@ Help
 ----
   -h,  --help              Print this message.
 ```
+## Planned features
+* Recursive backups (implemented but not tested yet)
+* Pre-/Post-Executions to lock databases or to others
+* Conditional execution to skip backup in some situation, target not available, no wifi connection etc.
+* Config file generator to create config file based according to current command line parameter
+  
 ## Bugs and feature requests
 Please feel free to [open a GitHub issue](https://github.com/selbitschka/zfs-backup/issues/new) for feature requests and bugs.
 
