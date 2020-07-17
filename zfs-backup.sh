@@ -188,7 +188,7 @@ function help_permissions_send() {
   fi
   log_debug "Sending user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$SRC_TYPE" "zfs allow -u $current_user send,snapshot,hold $SRC_DATASET")"
+  log_debug "$(build_cmd "$SRC_TYPE" "zfs allow -u $current_user send,snapshot,hold,destroy,mount $SRC_DATASET")"
 }
 
 function help_permissions_receive() {
@@ -200,7 +200,7 @@ function help_permissions_receive() {
   fi
   log_debug "Receiving user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -u $current_user compression,mountpoint,create,mount,receive $DST_DATASET")"
+  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -u $current_user compression,mountpoint,create,receive,mount,destroy $DST_DATASET")"
 }
 
 # read all parameters
