@@ -1,4 +1,4 @@
-#zfs-backup
+# zfs-backup
 **PLEASE NOTE:** This script is in an early **BETA** stage. Use with care and not in production.
 
 ZFS Backup is a bash base backup solution for ZFS, leveraging the ZFS command line tools `zfs` and `zpool`.
@@ -20,7 +20,7 @@ Usage:
 zfs-backup -s pool/data -d pool/backup -dt ssh --ssh_host 192.168.1.1 --ssh_user backup ... [--help]
 zfs-backup -c configFile ... [--help]
 ```
-##Help
+## Help
 ```console
 Help:
 =====
@@ -79,7 +79,7 @@ Help
 ## Bugs and feature requests
 Please feel free to [open a GitHub issue](https://github.com/selbitschka/zfs-backup/issues/new) for feature requests and bugs.
 
-##License
+## License
 **MIT License**
 
 Copyright (c) 2020 Stefan Selbitschka
