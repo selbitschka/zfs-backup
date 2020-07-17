@@ -1293,6 +1293,9 @@ function execute() {
   if [ "$DRYRUN" == "true" ]; then
     log_info "dryrun ... nothing done."
     return 0
+  elif [ -n "$LOG_FILE" ]; then
+    eval $1 >> $LOG_FILE 2>&1
+    return
   else
     eval $1
     return
@@ -1338,7 +1341,7 @@ SRC_COUNT=$SRC_COUNT
 # $DST_DATASET_HELP
 DST_DATASET=\"$DST_DATASET\"
 # $DST_TYPE_HELP
-DST_TYPE=$TYPE_LOCAL
+DST_TYPE=$DST_TYPE
 # $DST_COUNT_HELP
 DST_COUNT=$DST_COUNT
 
