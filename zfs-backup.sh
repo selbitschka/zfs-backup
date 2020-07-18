@@ -34,7 +34,6 @@ LOG_ERROR="[ERROR]"
 LOG_CMD="[COMMAND]"
 SNAPSHOT_PREFIX="bkp"
 SNAPSHOT_HOLD_TAG="zfsbackup"
-SNAPSHOT_SYNCED_POSTFIX="synced"
 
 # datasets
 ID=
@@ -44,9 +43,7 @@ SRC_ENCRYPTED=false
 SRC_DECRYPT=false
 SRC_COUNT=1
 SRC_SNAPSHOTS=()
-SRC_SNAPSHOTS_SYNCED=()
 SRC_SNAPSHOT_LAST=
-SRC_SNAPSHOT_LAST_SYNCED=
 
 DST_DATASET=
 DST_TYPE=$TYPE_LOCAL
@@ -602,11 +599,12 @@ function zfs_snapshot_create_cmd() {
 # command used to rename a synced snapshots
 # $1 zfs command
 # $2 snapshot name
+# $3 new name
 function zfs_snapshot_rename_cmd() {
   if [ "$RECURSIVE" == "true" ]; then
-    echo "$1 rename -r $2 ${2}_$SNAPSHOT_SYNCED_POSTFIX"
+    echo "$1 rename -r $2 $3"
   else
-    echo "$1 rename $2 ${2}_$SNAPSHOT_SYNCED_POSTFIX"
+    echo "$1 rename $2 $3"
   fi
 }
 
@@ -994,7 +992,7 @@ function validate() {
   # if we passed basic validation we load snapshots to check if this is the first sync
   load_src_snapshots
   # if we already have a sync done skip destination checks
-  if [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
+  if [ -z "$SRC_SNAPSHOT_LAST" ]; then
     FIRST_RUN=true
     log_debug "checking if destination dataset '$DST_DATASET' exists ..."
     if dataset_exists false; then
@@ -1024,9 +1022,15 @@ function validate() {
   else
     # check if destination snapshot exists
     load_dst_snapshots
-    if [ -z "$DST_SNAPSHOT_LAST" ] || [ "$(snapshot_name $SRC_DATASET $SRC_SNAPSHOT_LAST_SYNCED)" != "$(snapshot_name $DST_DATASET "${DST_SNAPSHOT_LAST}_${SNAPSHOT_SYNCED_POSTFIX}")" ]; then
-      log_error "Synced snapshot '$SRC_SNAPSHOT_LAST_SYNCED' exists but destination has no corresponding snapshot."
-      log_error "We are out of sync, please delete all source and destination snapshots and start over."
+    if [ -z "$DST_SNAPSHOT_LAST" ]; then
+      log_error "Destination does not have a snapshot but source does."
+      log_error "Either the initial sync did not work or we are out of sync."
+      log_error "Please delete all snapshots and start with full sync."
+      exit $EXIT_ERROR
+    elif ! synced; then
+      log_error "Last destination snapshot $DST_SNAPSHOT_LAST is not present at source."
+      log_error "We are out of sync."
+      log_error "Please delete all snapshots on both sides and start with full sync."
       exit $EXIT_ERROR
     fi
   fi
@@ -1034,34 +1038,25 @@ function validate() {
 
 function load_src_snapshots() {
   local pattern
-  local pattern_synced
   local escaped_src_dataset
 
   SRC_SNAPSHOTS=()
-  SRC_SNAPSHOTS_SYNCED=()
   SRC_SNAPSHOT_LAST=
-  SRC_SNAPSHOT_LAST_SYNCED=
 
   escaped_src_dataset="${SRC_DATASET//\//\\/}"
   # shellcheck disable=SC1087
   pattern="^$escaped_src_dataset[@#]${SNAPSHOT_PREFIX}_${ID}.*"
-  # shellcheck disable=SC1087
-  pattern_synced="^$escaped_src_dataset[@#]${SNAPSHOT_PREFIX}_${ID}.*${SNAPSHOT_SYNCED_POSTFIX}"
   if [ "$BOOKMARK" == "true" ]; then
     log_debug "getting source snapshot and bookmark list ..."
     for snap in $(dataset_list_snapshots_bookmarks true); do
-      if [[ "$snap" =~ $pattern_synced ]]; then
-        SRC_SNAPSHOTS_SYNCED+=("$snap")
-      elif [[ "$snap" =~ $pattern ]]; then
+      if [[ "$snap" =~ $pattern ]]; then
         SRC_SNAPSHOTS+=("$snap")
       fi
     done
   else
     log_debug "getting source snapshot list ..."
     for snap in $(dataset_list_snapshots true); do
-      if [[ "$snap" =~ $pattern_synced ]]; then
-        SRC_SNAPSHOTS_SYNCED+=("$snap")
-      elif [[ "$snap" =~ $pattern ]]; then
+      if [[ "$snap" =~ $pattern ]]; then
         SRC_SNAPSHOTS+=("$snap")
       fi
     done
@@ -1069,10 +1064,6 @@ function load_src_snapshots() {
 
   if [ ${#SRC_SNAPSHOTS[@]} -gt 0 ]; then
     SRC_SNAPSHOT_LAST=${SRC_SNAPSHOTS[*]: -1}
-  fi
-
-  if [ ${#SRC_SNAPSHOTS_SYNCED[@]} -gt 0 ]; then
-    SRC_SNAPSHOT_LAST_SYNCED=${SRC_SNAPSHOTS_SYNCED[*]: -1}
   fi
 }
 
@@ -1098,6 +1089,16 @@ function load_dst_snapshots() {
   fi
 }
 
+# check if last destination snapshot is still present in source
+function synced() {
+  if [ -n "$DST_SNAPSHOT_LAST" ]; then
+    for snap in "${SRC_SNAPSHOTS[@]}"; do
+      [[ "$snap" == "$DST_SNAPSHOT_LAST" ]] && return
+    done
+  fi
+  return 1
+}
+
 function do_backup() {
   local error
   local cmd
@@ -1111,13 +1112,6 @@ function do_backup() {
       cmd="$(build_cmd "$SRC_TYPE" "$(zfs_resume_send_cmd "$ZFS_CMD" "$resume_token")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET" "true")")"
       if execute "$cmd"; then
         log_info "... finished previous sync."
-        # renaming successfully resumed snapshot
-        log_info "renaming resumed snapshot ..."
-        cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_rename_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")"
-        if ! execute "$cmd"; then
-          log_error "Error renaming snapshot."
-          log_error "You need to rename the snapshot from $SRC_SNAPSHOT_LAST to ${SRC_SNAPSHOT_LAST}_$SNAPSHOT_SYNCED_POSTFIX by yourself otherwise this snapshot stays forever."
-        fi
         # reload destination snapshots to get last
         load_dst_snapshots
 
@@ -1163,16 +1157,16 @@ function do_backup() {
     fi
   fi
 
-  if [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
+  if [ -z "$DST_SNAPSHOT_LAST" ]; then
     log_info "No synced snapshot or bookmark found."
     log_info "Using newest snapshot '$SRC_SNAPSHOT_LAST' for initial sync ..."
   else
-    log_info "Using last synced snapshot '$SRC_SNAPSHOT_LAST_SYNCED' for incremental sync ..."
+    log_info "Using last synced snapshot '$DST_SNAPSHOT_LAST' for incremental sync ..."
   fi
 
   # sending snapshot
   log_info "sending snapshot ..."
-  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$SRC_SNAPSHOT_LAST_SYNCED" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
+  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$DST_SNAPSHOT_LAST" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
   if execute "$cmd"; then
     # reload destination snapshots to get last
     load_dst_snapshots
@@ -1183,17 +1177,6 @@ function do_backup() {
     if ! execute "$cmd"; then
       log_error "Error hold snapshot $DST_SNAPSHOT_LAST."
       error=true
-    fi
-
-    # renaming successfully sent snapshot
-    log_info "renaming snapshot ..."
-    cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_rename_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")"
-    if execute "$cmd"; then
-      SRC_SNAPSHOT_LAST="${SRC_SNAPSHOT_LAST}_$SNAPSHOT_SYNCED_POSTFIX"
-    else
-      log_error "Error renaming snapshot."
-      log_error "You need to rename the snapshot from $SRC_SNAPSHOT_LAST to ${SRC_SNAPSHOT_LAST}_$SNAPSHOT_SYNCED_POSTFIX by yourself to allow incremental backups again."
-      exit $EXIT_ERROR
     fi
 
     # convert snapshot to bookmark
@@ -1235,9 +1218,9 @@ function do_backup() {
 
   # cleanup successfully send snapshots on both sides
   load_src_snapshots
-  if [ ${#SRC_SNAPSHOTS_SYNCED[@]} -gt "$SRC_COUNT" ]; then
+  if [ ${#SRC_SNAPSHOTS[@]} -gt "$SRC_COUNT" ]; then
     log_info "Deleting old source snapshots ..."
-    for snap in "${SRC_SNAPSHOTS_SYNCED[@]::${#SRC_SNAPSHOTS_SYNCED[@]}-$SRC_COUNT}"; do
+    for snap in "${SRC_SNAPSHOTS[@]::${#SRC_SNAPSHOTS[@]}-$SRC_COUNT}"; do
       if [[ "$snap" =~ @ ]]; then
         if [ "$NO_HOLD" = "false" ]; then
           log_info "... release snapshot $snap"
@@ -1348,7 +1331,6 @@ DST_COUNT=$DST_COUNT
 # Snapshot pre-/postfix and hold tag
 #SNAPSHOT_PREFIX=\"bkp\"
 #SNAPSHOT_HOLD_TAG=\"zfsbackup\"
-#SNAPSHOT_SYNCED_POSTFIX=\"synced\"
 
 ## SSH parameter
 # $SSH_HOST_HELP
