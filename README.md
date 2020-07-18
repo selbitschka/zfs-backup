@@ -117,12 +117,22 @@ Create parent dataset on target (192.168.1.1) and give `zfsbackup` user required
 ```console
 ssh user@192.168.1.1
 sudo zfs create -o readonly=on -o canmount=off storage/zfsbackup
-sudo zfs allow -u zfsbackup compression,mountpoint,create,receive,mount storage/zfsbackup
+sudo zfs allow -u zfsbackup compression,create,mount,mountpoint,receive storage/zfsbackup
 sudo zfs allow -d -u zfsbackup destroy,hold,release storage/zfsbackup
+sudo zfs allow storage/zfsbackup
+---- Permissions on storage/zfsbackup ---------------------
+Descendent permissions:
+	user zfsbackup destroy,hold,release
+Local+Descendent permissions:
+	user zfsbackup compression,create,mount,mountpoint,receive
 ```
 Allow user `zfsbackup` to perform backup tasks on source dataset `rpool/data` (local machine)
 ```console
-sudo zfs allow -u zfsbackup send,snapshot,hold,destroy,mount,rename,release rpool/data
+sudo zfs allow -u zfsbackup destroy,hold,release,send,snapshot rpool/data
+sudo zfs allow rpool/data
+---- Permissions on rpool/data -------------------------
+Local+Descendent permissions:
+	user zfsbackup destroy,hold,release,send,snapshot
 ```
 At the moment it is not possible to delegate only snapshot destroy permission. Your backup user can
 delete the dataset as well. Be aware of that!

@@ -42,7 +42,6 @@ DST_COUNT=3
 # Snapshot pre-/postfix and hold tag
 #SNAPSHOT_PREFIX="bkp"
 #SNAPSHOT_HOLD_TAG="zfsbackup"
-#SNAPSHOT_SYNCED_POSTFIX="synced"
 
 ## SSH parameter
 # Host to connect to.

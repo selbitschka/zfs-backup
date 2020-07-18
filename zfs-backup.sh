@@ -1024,9 +1024,16 @@ function validate() {
     load_dst_snapshots
     if [ -z "$DST_SNAPSHOT_LAST" ]; then
       log_error "Destination does not have a snapshot but source does."
-      log_error "Either the initial sync did not work or we are out of sync."
-      log_error "Please delete all snapshots and start with full sync."
-      exit $EXIT_ERROR
+      if [ "$RESUME" == "true" ]; then
+        log_info "Look if initial sync can be resumed ..."
+        if [ "$(dataset_resume_token)" == "-" ]; then
+          log_error "... no resume token found. Please delete all snapshots and start with full sync."
+        fi
+      else
+        log_error "Either the initial sync did not work or we are out of sync."
+        log_error "Please delete all snapshots and start with full sync."
+        exit $EXIT_ERROR
+      fi
     elif ! synced; then
       log_error "Last destination snapshot $DST_SNAPSHOT_LAST is not present at source."
       log_error "We are out of sync."
