@@ -44,6 +44,7 @@ SRC_DECRYPT=false
 SRC_COUNT=1
 SRC_SNAPSHOTS=()
 SRC_SNAPSHOT_LAST=
+SRC_SNAPSHOT_LAST_SYNCED=
 
 DST_DATASET=
 DST_TYPE=$TYPE_LOCAL
@@ -1034,7 +1035,7 @@ function validate() {
         log_error "Please delete all snapshots and start with full sync."
         exit $EXIT_ERROR
       fi
-    elif ! synced; then
+    elif [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
       log_error "Last destination snapshot $DST_SNAPSHOT_LAST is not present at source."
       log_error "We are out of sync."
       log_error "Please delete all snapshots on both sides and start with full sync."
@@ -1055,55 +1056,76 @@ function load_src_snapshots() {
   pattern="^$escaped_src_dataset[@#]${SNAPSHOT_PREFIX}_${ID}.*"
   if [ "$BOOKMARK" == "true" ]; then
     log_debug "getting source snapshot and bookmark list ..."
+    log_debug "... filter with pattern $pattern"
     for snap in $(dataset_list_snapshots_bookmarks true); do
       if [[ "$snap" =~ $pattern ]]; then
         SRC_SNAPSHOTS+=("$snap")
+        log_debug "... add $snap"
+      else
+        log_debug "... $snap does not match pattern."
       fi
     done
   else
     log_debug "getting source snapshot list ..."
+    log_debug "... filter with pattern $pattern"
     for snap in $(dataset_list_snapshots true); do
       if [[ "$snap" =~ $pattern ]]; then
         SRC_SNAPSHOTS+=("$snap")
+        log_debug "... add $snap"
+      else
+        log_debug "... $snap does not match pattern."
       fi
     done
   fi
 
   if [ ${#SRC_SNAPSHOTS[@]} -gt 0 ]; then
     SRC_SNAPSHOT_LAST=${SRC_SNAPSHOTS[*]: -1}
+    log_debug "... found ${#SRC_SNAPSHOTS[@]} snapshots."
+    log_debug "... last snapshot: $SRC_SNAPSHOT_LAST"
+  else
+    log_debug "... no snapshot found."
   fi
 }
 
 function load_dst_snapshots() {
   local pattern
   local escaped_dst_dataset
+  local dst_name
+  local src_name
 
   DST_SNAPSHOTS=()
   DST_SNAPSHOT_LAST=
+  SRC_SNAPSHOT_LAST_SYNCED=
 
   escaped_dst_dataset="${DST_DATASET//\//\\/}"
   # shellcheck disable=SC1087
   pattern="^$escaped_dst_dataset[@#]${SNAPSHOT_PREFIX}_${ID}.*"
   log_debug "getting destination snapshot list ..."
+  log_debug "... filter with pattern $pattern"
   for snap in $(dataset_list_snapshots false); do
     if [[ "$snap" =~ $pattern ]]; then
+      log_debug "... add $snap"
       DST_SNAPSHOTS+=("$snap")
+    else
+      log_debug "... $snap does not match pattern."
     fi
   done
 
   if [ ${#DST_SNAPSHOTS[@]} -gt 0 ]; then
     DST_SNAPSHOT_LAST=${DST_SNAPSHOTS[*]: -1}
-  fi
-}
-
-# check if last destination snapshot is still present in source
-function synced() {
-  if [ -n "$DST_SNAPSHOT_LAST" ]; then
+    log_debug "... found ${#DST_SNAPSHOTS[@]} snapshots."
+    log_debug "... last snapshot: $DST_SNAPSHOT_LAST"
+    dst_name="$(snapshot_name $DST_DATASET $DST_SNAPSHOT_LAST)"
     for snap in "${SRC_SNAPSHOTS[@]}"; do
-      [[ "$snap" == "$DST_SNAPSHOT_LAST" ]] && return
+      src_name="$(snapshot_name $SRC_DATASET $snap)"
+      if [ "$src_name" == "$dst_name" ]; then
+        SRC_SNAPSHOT_LAST_SYNCED=$snap
+      fi
     done
+    log_debug "... last synced snapshot: $SRC_SNAPSHOT_LAST_SYNCED"
+  else
+    log_debug "... no snapshot found."
   fi
-  return 1
 }
 
 function do_backup() {
@@ -1121,7 +1143,6 @@ function do_backup() {
         log_info "... finished previous sync."
         # reload destination snapshots to get last
         load_dst_snapshots
-
         # put hold on destination snapshot
         log_info "hold snapshot $DST_SNAPSHOT_LAST ..."
         cmd=$(build_cmd $DST_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD_REMOTE "$DST_SNAPSHOT_LAST")")
@@ -1146,7 +1167,7 @@ function do_backup() {
     [ "$FIRST_RUN" == "true" ] && help_permissions_send
     exit $EXIT_ERROR
   fi
-
+  # reload source snapshots to get last
   load_src_snapshots
 
   if [ -z "$SRC_SNAPSHOT_LAST" ]; then
@@ -1164,16 +1185,16 @@ function do_backup() {
     fi
   fi
 
-  if [ -z "$DST_SNAPSHOT_LAST" ]; then
+  if [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
     log_info "No synced snapshot or bookmark found."
     log_info "Using newest snapshot '$SRC_SNAPSHOT_LAST' for initial sync ..."
   else
-    log_info "Using last synced snapshot '$DST_SNAPSHOT_LAST' for incremental sync ..."
+    log_info "Using last synced snapshot '$SRC_SNAPSHOT_LAST_SYNCED' for incremental sync ..."
   fi
 
   # sending snapshot
   log_info "sending snapshot ..."
-  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$DST_SNAPSHOT_LAST" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
+  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$SRC_SNAPSHOT_LAST_SYNCED" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
   if execute "$cmd"; then
     # reload destination snapshots to get last
     load_dst_snapshots
@@ -1205,7 +1226,7 @@ function do_backup() {
   else
     log_error "Error sending snapshot."
     [ "$FIRST_RUN" == "true" ] && help_permissions_receive
-    if [ "$INTERMEDIATE" == "true" ]; then
+    if [ "$INTERMEDIATE" == "true" ] || [ "$RESUME" == "true" ]; then
       log_info "Keeping unsent snapshot $SRC_SNAPSHOT_LAST for later send."
     else
       log_info "Destroying unsent snapshot $SRC_SNAPSHOT_LAST ..."
@@ -1216,10 +1237,6 @@ function do_backup() {
         log_error "Error destroying snapshot $SRC_SNAPSHOT_LAST"
       fi
     fi
-    error=true
-  fi
-
-  if [ "$error" == "true" ]; then
     exit $EXIT_ERROR
   fi
 
@@ -1271,8 +1288,10 @@ function do_backup() {
   fi
 
   if [ "$error" == "true" ]; then
-    exit $EXIT_ERROR
+    log_error "Sync finished with errors."
+    exit $EXIT_WARN
   else
+    log_info "Sync finished successful."
     exit $EXIT_OK
   fi
 }
@@ -1284,7 +1303,7 @@ function execute() {
     log_info "dryrun ... nothing done."
     return 0
   elif [ -n "$LOG_FILE" ]; then
-    eval $1 >> $LOG_FILE 2>&1
+    eval $1 >>$LOG_FILE 2>&1
     return
   else
     eval $1
