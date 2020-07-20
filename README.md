@@ -50,7 +50,9 @@ Parameters
                                  This options disables that and sends encrypted (mounted) datasets in plain.
   --no-holds                     Do not put hold tag on snapshots created by this tool.
   --only-if        [command]     Command or script to check preconditions, if command fails backup is not started.
-                                 Examples check IP: '[[ \"\$(ip -4 addr show wlp5s0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" =~ 192\.168\.2.* ]]'
+                                 Examples:
+                                 check IP: [[ \"\$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')\" =~ 192\.168\.2.* ]]
+                                 check wifi: [[ \"\$(iwgetid -r)\" == \"ssidname\" ]]
   --pre-run        [command]     Command or script to be executed before anything else is done (i.e. init a wireguard tunnel).
   --post-run       [command]     Command or script to be executed after the this script is finished.
   --pre-snapshot   [command]     Command or script to be executed before snapshot is made (i.e. to lock databases).

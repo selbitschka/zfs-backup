@@ -114,7 +114,7 @@ readonly DECRYPT_HElP=("By default encrypted source datasets are send in raw for
 readonly NO_HOLD_HELP="Do not put hold tag on snapshots created by this tool."
 readonly DEBUG_HELP="Print executed commands and other debugging information."
 
-readonly ONLY_IF_HELP=("Command or script to check preconditions, if command fails backup is not started." "Examples check IP: '[[ \\\"\\\$(ip -4 addr show wlp5s0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')\" =~ 192\\.168\\.2.* ]]'")
+readonly ONLY_IF_HELP=("Command or script to check preconditions, if command fails backup is not started." "Examples:" "check IP: [[ \\\"\\\$(ip -4 addr show wlp5s0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')\\\" =~ 192\\.168\\.2.* ]]" "check wifi: [[ \\\"\\\$(iwgetid -r)\\\" == \\\"ssidname\\\" ]]")
 readonly PRE_RUN_HELP="Command or script to be executed before anything else is done (i.e. init a wireguard tunnel)."
 readonly POST_RUN_HELP="Command or script to be executed after the this script is finished."
 readonly PRE_SNAPSHOT_HELP="Command or script to be executed before snapshot is made (i.e. to lock databases)."
@@ -166,6 +166,8 @@ Parameters
   --no-holds                     $NO_HOLD_HELP
   --only-if        [command]     ${ONLY_IF_HELP[0]}
                                  ${ONLY_IF_HELP[1]}
+                                 ${ONLY_IF_HELP[2]}
+                                 ${ONLY_IF_HELP[3]}
   --pre-run        [command]     $PRE_RUN_HELP
   --post-run       [command]     $POST_RUN_HELP
   --pre-snapshot   [command]     $PRE_SNAPSHOT_HELP
