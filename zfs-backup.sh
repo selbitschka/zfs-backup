@@ -1392,7 +1392,7 @@ ZPOOL_CMD_REMOTE=$ZFS_CMD_REMOTE
 # If this is not set the id is auto generated to the
 # md5sum of destination dataset and ssh host (if present).
 # Use only A-Za-z0-9 and maximum of $ID_LENGTH characters.
-#ID=
+ID=\"$ID\"
 
 ## Source dataset options
 # $SRC_DATASET_HELP
