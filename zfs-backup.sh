@@ -70,6 +70,13 @@ DEFAULT_SEND_PARAMETER="-Lec"
 SEND_PARAMETER=
 RECEIVE_PARAMETER=
 
+# pre post scripts
+ONLY_IF=
+PRE_SNAPSHOT=
+POST_SNAPSHOT=
+PRE_RUN=
+POST_RUN=
+
 # ssh parameter
 SSH_HOST=
 SSH_PORT=22
@@ -94,6 +101,7 @@ readonly SSH_USER_HELP="User used for connection. If not set current user is use
 readonly SSH_KEY_HELP="Key to use for connection. If not set default key is used."
 readonly SSH_OPT_HELP="Options used for connection (i.e: '-oStrictHostKeyChecking=accept-new')."
 
+readonly ID_HELP=("Unique ID of backup destination (default: md5sum of destination dataset and ssh host, if present)." "Required if you use multiple destinations to identify snapshots. Maximum of $ID_LENGTH characters or numbers.")
 readonly SEND_PARAMETER_HELP="Parameters used for 'zfs send' command. If set these parameters are use and all other settings (see below) are ignored."
 readonly RECEIVE_PARAMETER_HELP="Parameters used for 'zfs receive' command. If set these parameters are use and all other settings (see below) are ignored."
 
@@ -105,6 +113,12 @@ readonly NO_OVERRIDE_HElP=("By default option '-F' is used during receive to dis
 readonly DECRYPT_HElP=("By default encrypted source datasets are send in raw format using send option '-w'." "This options disables that and sends encrypted (mounted) datasets in plain.")
 readonly NO_HOLD_HELP="Do not put hold tag on snapshots created by this tool."
 readonly DEBUG_HELP="Print executed commands and other debugging information."
+
+readonly ONLY_IF_HELP=("Command or script to check preconditions, if command fails backup is not started." "Examples check IP: '[[ \\\"\\\$(ip -4 addr show wlp5s0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')\" =~ 192\\.168\\.2.* ]]'")
+readonly PRE_RUN_HELP="Command or script to be executed before anything else is done (i.e. init a wireguard tunnel)."
+readonly POST_RUN_HELP="Command or script to be executed after the this script is finished."
+readonly PRE_SNAPSHOT_HELP="Command or script to be executed before snapshot is made (i.e. to lock databases)."
+readonly POST_SNAPSHOT_HELP="Command or script to be executed after snapshot is made."
 
 usage() {
   local usage
@@ -136,8 +150,8 @@ Parameters
   -d,  --dst       [name]        $DST_DATASET_HELP
   -dt, --dst-type  [ssh|local]   $DST_TYPE_HELP
   -ds, --dst-snaps [count]       $DST_COUNT_HELP
-  -i,  --id        [name]        Unique ID of backup destination (default: md5sum of destination dataset and ssh host, if present).
-                                 Required if you use multiple destinations to identify snapshots. Maximum of $ID_LENGTH characters or numbers.
+  -i,  --id        [name]        ${ID_HELP[0]}
+                                 ${ID_HELP[1]}
   --send-param     [parameters]  $SEND_PARAMETER_HELP
   --recv-param     [parameters]  $RECEIVE_PARAMETER_HELP
   --bookmark                     $BOOKMARK_HELP
@@ -150,6 +164,12 @@ Parameters
   --decrypt                      ${DECRYPT_HElP[0]}
                                  ${DECRYPT_HElP[1]}
   --no-holds                     $NO_HOLD_HELP
+  --only-if        [command]     ${ONLY_IF_HELP[0]}
+                                 ${ONLY_IF_HELP[1]}
+  --pre-run        [command]     $PRE_RUN_HELP
+  --post-run       [command]     $POST_RUN_HELP
+  --pre-snapshot   [command]     $PRE_SNAPSHOT_HELP
+  --post-snapshot  [command]     $POST_SNAPSHOT_HELP
 
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
@@ -296,6 +316,31 @@ while [[ $# -gt 0 ]]; do
     ;;
   --no-holds)
     NO_HOLD=true
+    shift
+    ;;
+  --only-if)
+    ONLY_IF="$2"
+    shift
+    shift
+    ;;
+  --pre-snapshot)
+    PRE_SNAPSHOT="$2"
+    shift
+    shift
+    ;;
+  --post-snapshot)
+    POST_SNAPSHOT="$2"
+    shift
+    shift
+    ;;
+  --pre-run)
+    PRE_RUN="$2"
+    shift
+    shift
+    ;;
+  --post-run)
+    POST_RUN="$2"
+    shift
     shift
     ;;
   --ssh_host)
@@ -454,7 +499,7 @@ function build_cmd() {
     ;;
   *)
     log_error "Invalid type '$1'. Use '$TYPE_LOCAL' for local backup or '$TYPE_SSH' for remote server."
-    exit $EXIT_ERROR
+    stop $EXIT_ERROR
     ;;
   esac
 }
@@ -947,7 +992,7 @@ function validate() {
   if [ -n "$exit_code" ]; then
     echo
     usage
-    exit $exit_code
+    stop $exit_code
   fi
 
   log_debug "checking if source dataset '$SRC_DATASET' exists ..."
@@ -956,7 +1001,7 @@ function validate() {
   else
     log_error "Source dataset '$SRC_DATASET' does not exists."
     dataset_list true
-    exit $EXIT_ERROR
+    stop $EXIT_ERROR
   fi
 
   log_debug "checking if source dataset '$SRC_DATASET' is encrypted ..."
@@ -970,7 +1015,7 @@ function validate() {
   if [ "$SRC_ENCRYPTED" == "true" ] && [ "$SRC_DECRYPT" == true ] && [ "$RECURSIVE" == "true" ]; then
     log_error "Encrypted datasets can only be replicated using encrypted raw format."
     log_error "You cannot use '--recursive' and '--decrypt' together."
-    exit $EXIT_INVALID_PARAM
+    stop $EXIT_INVALID_PARAM
   fi
 
   # bookmarks only make sense if snapshot count on source side is 1
@@ -1001,13 +1046,13 @@ function validate() {
       log_debug "... '$DST_DATASET' exists."
       if [ "$SRC_ENCRYPTED" == "true" ]; then
         log_error "You cannot initially send an encrypted dataset into an existing one."
-        exit $EXIT_ERROR
+        stop $EXIT_ERROR
       fi
     else
       DST_EXITS=false
       if ! dataset_exists false "$(dataset_parent $DST_DATASET)"; then
         log_error "Parent dataset $(dataset_parent $DST_DATASET) does not exist."
-        exit $EXIT_ERROR
+        stop $EXIT_ERROR
       fi
       log_debug "checking if destination pool supports encryption ..."
       if pool_support_encryption false; then
@@ -1016,7 +1061,7 @@ function validate() {
         log_debug "... encryption not supported"
         if [ "$SRC_ENCRYPTED" == "true" ]; then
           log_error "Source dataset '$SRC_DATASET' is encrypted but target pool does not support encryption."
-          exit $EXIT_ERROR
+          stop $EXIT_ERROR
         fi
       fi
     fi
@@ -1033,13 +1078,13 @@ function validate() {
       else
         log_error "Either the initial sync did not work or we are out of sync."
         log_error "Please delete all snapshots and start with full sync."
-        exit $EXIT_ERROR
+        stop $EXIT_ERROR
       fi
     elif [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
       log_error "Last destination snapshot $DST_SNAPSHOT_LAST is not present at source."
       log_error "We are out of sync."
       log_error "Please delete all snapshots on both sides and start with full sync."
-      exit $EXIT_ERROR
+      stop $EXIT_ERROR
     fi
   fi
 }
@@ -1153,26 +1198,39 @@ function do_backup() {
         log_info "Continue with new sync ..."
       else
         log_error "Error resuming previous aborted sync."
-        exit $EXIT_ERROR
+        stop $EXIT_ERROR
       fi
     else
       log_info "... no sync to resume."
     fi
   fi
 
+  # create snapshot
+  if [ -n "$PRE_SNAPSHOT" ]; then
+    if ! execute "$PRE_SNAPSHOT"; then
+      log_error "Error executing pre snapshot command/script ..."
+      stop $EXIT_ERROR
+    fi
+  fi
   cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_create_cmd "$ZFS_CMD" "$SRC_DATASET")")"
   log_info "Creating new snapshot for sync ..."
   if ! execute "$cmd"; then
     log_error "Error creating new snapshot."
     [ "$FIRST_RUN" == "true" ] && help_permissions_send
-    exit $EXIT_ERROR
+    stop $EXIT_ERROR
+  fi
+  if [ -n "$POST_SNAPSHOT" ]; then
+    if ! execute "$POST_SNAPSHOT"; then
+      log_error "Error executing post snapshot command/script ..."
+      error=true
+    fi
   fi
   # reload source snapshots to get last
   load_src_snapshots
 
   if [ -z "$SRC_SNAPSHOT_LAST" ]; then
     log_error "No snapshot found."
-    exit $EXIT_ERROR
+    stop $EXIT_ERROR
   fi
 
   # put hold on source snapshot
@@ -1237,7 +1295,7 @@ function do_backup() {
         log_error "Error destroying snapshot $SRC_SNAPSHOT_LAST"
       fi
     fi
-    exit $EXIT_ERROR
+    stop $EXIT_ERROR
   fi
 
   # cleanup successfully send snapshots on both sides
@@ -1289,17 +1347,18 @@ function do_backup() {
 
   if [ "$error" == "true" ]; then
     log_error "Sync finished with errors."
-    exit $EXIT_WARN
+    stop $EXIT_WARN
   else
     log_info "Sync finished successful."
-    exit $EXIT_OK
+    stop $EXIT_OK
   fi
 }
 
 # $1 command
+# $2 no dryrun
 function execute() {
   log_cmd "$1"
-  if [ "$DRYRUN" == "true" ]; then
+  if [ "$DRYRUN" == "true" ] && [ -z "$2" ]; then
     log_info "dryrun ... nothing done."
     return 0
   elif [ -n "$LOG_FILE" ]; then
@@ -1394,6 +1453,19 @@ SEND_PARAMETER=\"$SEND_PARAMETER\"
 # $RECEIVE_PARAMETER_HELP
 RECEIVE_PARAMETER=\"$RECEIVE_PARAMETER\"
 
+## Scripts and commands
+# ${ONLY_IF_HELP[0]}
+# ${ONLY_IF_HELP[1]}
+ONLY_IF=\"$ONLY_IF\"
+# $PRE_RUN_HELP
+PRE_RUN=\"$PRE_RUN\"
+# $POST_RUN_HELP
+POST_RUN=\"$POST_RUN\"
+# $PRE_SNAPSHOT_HELP
+PRE_SNAPSHOT=\"$PRE_SNAPSHOT\"
+# $POST_SNAPSHOT_HELP
+POST_SNAPSHOT=\"$POST_SNAPSHOT\"
+
 # Logging options
 #LOG_FILE=
 #LOG_DATE_PATTERN=\"%Y-%m-%d - %H:%M:%S\"
@@ -1411,14 +1483,46 @@ RECEIVE_PARAMETER=\"$RECEIVE_PARAMETER\"
   fi
 }
 
+function start() {
+  if [ -n "$ONLY_IF" ]; then
+    log_debug "check if backup should be done ..."
+    if execute "$ONLY_IF" "false"; then
+      log_debug "... pre condition are met, continue."
+    else
+      log_error "... pre conditions are not met, abort backup."
+      exit $EXIT_OK
+    fi
+  fi
+  if [ -n "$PRE_RUN" ]; then
+    log_debug "executing pre run script ..."
+    if execute "$PRE_RUN" "false"; then
+      log_debug "... done"
+    else
+      log_error "Error executing pre run script, abort backup."
+    fi
+  fi
+}
+
+# $1 exit code
+function stop() {
+  if [ -n "$POST_RUN" ]; then
+    log_debug "executing post run script ..."
+    if execute "$POST_RUN" "false"; then
+      log_debug "... done"
+    else
+      log_error "Error executing post run script, abort backup."
+    fi
+  fi
+  exit $1
+}
+
 # main function calls
+load_config
+start
+distro_dependent_commands
+validate
 if [ "$MAKE_CONFIG" == "true" ]; then
-  distro_dependent_commands
-  validate
   create_config
 else
-  load_config
-  distro_dependent_commands
-  validate
   do_backup
 fi

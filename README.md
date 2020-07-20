@@ -23,39 +23,42 @@ zfs-backup -c configFile ... [--help]
 ```console
 Help:
 =====
-Config
-------
-  -c,  --config [file]     Config file to load parameter from (default: ./zfs-backup.config).
-  -v,  --verbose           Print executed commands and other debugging information.
-  --dryrun                 Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
-  --version                Print version.
+Parameters
+----------
+  -c,  --config    [file]        Config file to load parameter from (default: ).
+  --create-config                Create a config file base on given commandline parameters.
+                                 If a config file ('-c') is use the output is written to that file.
 
-Options
--------
   -s,  --src       [name]        Name of the sending dataset (source).
-  -st, --src-type  [ssh|local]   Type of source dataset (default: local)
+  -st, --src-type  [ssh|local]   Type of source dataset: 'local' or 'local' (default: local).
   -ss, --src-snaps [count]       Number (greater 0) of successful sent snapshots to keep on source side (default: 1).
   -d,  --dst       [name]        Name of the receiving dataset (destination).
   -dt, --dst-type  [ssh|local]   Type of destination dataset (default: 'local').
   -ds, --dst-snaps [count]       Number (greater 0) of successful received snapshots to keep on destination side (default: 1).
   -i,  --id        [name]        Unique ID of backup destination (default: md5sum of destination dataset and ssh host, if present).
-                                 Required if you use multiple destinations to identify snapshots.
-                                 Maximum of 10 characters or numbers.
-  --send-param     [parameters]  Parameters used for 'zfs send' command. If set these parameters are use and all other
-                                 settings (see below) are ignored.
-  --recv-param     [parameters]  Parameters used for 'zfs receive' command. If set these parameters are use and all other
-                                 settings (see below) are ignored.
-  --bookmark                     Use bookmark (if supported) instead of snapshot on source dataset.
-                                 Ignored if '-ss, --src-count' is greater 1.
+                                 Required if you use multiple destinations to identify snapshots. Maximum of 10 characters or numbers.
+  --send-param     [parameters]  Parameters used for 'zfs send' command. If set these parameters are use and all other settings (see below) are ignored.
+  --recv-param     [parameters]  Parameters used for 'zfs receive' command. If set these parameters are use and all other settings (see below) are ignored.
+  --bookmark                     Use bookmark (if supported) instead of snapshot on source dataset. Ignored if '-ss, --src-count' is greater 1.
   --resume                       Make sync resume able and resume interrupted streams. User '-s' option during receive.
   --intermediary                 Use '-I' instead of '-i' while sending to keep intermediary snapshots.
-                                 If set created but not send snapshots are kept, otherwise the are deleted.
+                                 If set, created but not send snapshots are kept, otherwise they are deleted.
   --mount                        Try to mount received dataset on destination. Option '-u' is NOT used during receive.
   --no-override                  By default option '-F' is used during receive to discard changes made in destination dataset.
                                  If you use this option receive will fail if destination was changed.
   --decrypt                      By default encrypted source datasets are send in raw format using send option '-w'.
                                  This options disables that and sends encrypted (mounted) datasets in plain.
   --no-holds                     Do not put hold tag on snapshots created by this tool.
+  --only-if        [command]     Command or script to check preconditions, if command fails backup is not started.
+                                 Examples check IP: '[[ \"\$(ip -4 addr show wlp5s0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" =~ 192\.168\.2.* ]]'
+  --pre-run        [command]     Command or script to be executed before anything else is done (i.e. init a wireguard tunnel).
+  --post-run       [command]     Command or script to be executed after the this script is finished.
+  --pre-snapshot   [command]     Command or script to be executed before snapshot is made (i.e. to lock databases).
+  --post-snapshot  [command]     Command or script to be executed after snapshot is made.
+
+  -v,  --verbose                 Print executed commands and other debugging information.
+  --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
+  --version                      Print version.
 
 Types:
 ------
@@ -67,7 +70,7 @@ SSH Options
 If you use type 'ssh' you need to specify Host, Port, etc.
  --ssh_host [hostname]          Host to connect to.
  --ssh_port [port]              Port to use (default: 22).
- --ssh_user [port]              User used for connection. If not set current user is used.
+ --ssh_user [username]          User used for connection. If not set current user is used.
  --ssh_key  [keyfile]           Key to use for connection. If not set default key is used.
  --ssh_opt  [options]           Options used for connection (i.e: '-oStrictHostKeyChecking=accept-new').
 
@@ -80,7 +83,11 @@ Here you find a setup example using a separate backup user, ssh target and more.
 You probably need to adjust this to your needs.
 
 Aim is to back up the local dataset `rpool/data` to a remote machine with IP 
-`192.168.1.1` using ssh and a backup user `zfsbackup` to dataset `storage/zfsbackup`.
+`192.168.1.1` using ssh and a backup user `zfsbackup` to dataset `storage/zfsbackup`. 
+
+Please note that using ZFS on Linux as non-root user could be troublesome, because some features like bookmarks
+require root permission. Furthermore, the current ZFS permission system does not allow strict separation of
+destroy permissions for snapshots, so your backup user needs nearly full permission on datasets to back up.   
 
 On source (local machine) create a new user `zfsbackup` to perform the backups
 ```console
@@ -193,8 +200,6 @@ of create a cronjob
 ```
 ## Planned features
 * Recursive backups (implemented but not tested yet)
-* Pre-/Post-Executions to lock databases or to others
-* Conditional execution to skip backup in some situation, target not available, no wifi connection etc.
   
 ## Bugs and feature requests
 Please feel free to [open a GitHub issue](https://github.com/selbitschka/zfs-backup/issues/new) for feature requests and bugs.
