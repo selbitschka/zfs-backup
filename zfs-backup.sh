@@ -48,10 +48,11 @@ SRC_SNAPSHOT_LAST_SYNCED=
 
 DST_DATASET=
 DST_TYPE=$TYPE_LOCAL
-DST_EXITS=false
 DST_COUNT=1
 DST_SNAPSHOTS=()
 DST_SNAPSHOT_LAST=
+DST_PROP="canmount=off,mountpoint=none,readonly=on"
+DST_PROP_ARRAY=()
 
 # boolean options
 RECURSIVE=false
@@ -94,6 +95,7 @@ readonly SRC_COUNT_HELP="Number (greater 0) of successful sent snapshots to keep
 readonly DST_DATASET_HELP="Name of the receiving dataset (destination)."
 readonly DST_TYPE_HELP="Type of destination dataset (default: 'local')."
 readonly DST_COUNT_HELP="Number (greater 0) of successful received snapshots to keep on destination side (default: 1)."
+readonly DST_PROP_HELP=("Properties to set on destination after first sync. User ',' separated list of 'property=value'" "If 'inherit' is used as value 'zfs inherit' is executed otherwise 'zfs set'." "Default: '$DST_PROP'")
 
 readonly SSH_HOST_HELP="Host to connect to."
 readonly SSH_PORT_HELP="Port to use (default: 22)."
@@ -150,6 +152,9 @@ Parameters
   -d,  --dst       [name]        $DST_DATASET_HELP
   -dt, --dst-type  [ssh|local]   $DST_TYPE_HELP
   -ds, --dst-snaps [count]       $DST_COUNT_HELP
+  -dp, --dst-prop  [properties]  ${DST_PROP_HELP[0]}
+                                 ${DST_PROP_HELP[1]}
+                                 ${DST_PROP_HELP[2]}
   -i,  --id        [name]        ${ID_HELP[0]}
                                  ${ID_HELP[1]}
   --send-param     [parameters]  $SEND_PARAMETER_HELP
@@ -208,7 +213,7 @@ function help_permissions_send() {
   fi
   log_debug "Sending user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$SRC_TYPE" "zfs allow -u $current_user send,snapshot,hold,destroy,mount $SRC_DATASET")"
+  log_debug "$(build_cmd "$SRC_TYPE" "zfs allow -u $current_user send,snapshot,hold,release,destroy,mount $SRC_DATASET")"
 }
 
 function help_permissions_receive() {
@@ -220,7 +225,8 @@ function help_permissions_receive() {
   fi
   log_debug "Receiving user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -u $current_user compression,mountpoint,create,receive,mount,destroy $DST_DATASET")"
+  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -u $current_user compression,create,mount,receive $(dataset_parent $DST_DATASET)")"
+  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -d -u $current_user canmount,destroy,hold,mountpoint,readonly,release $(dataset_parent $DST_DATASET)")"
 }
 
 # read all parameters
@@ -269,6 +275,11 @@ while [[ $# -gt 0 ]]; do
     ;;
   -ds | --dst-snaps)
     DST_COUNT="$2"
+    shift
+    shift
+    ;;
+  -dp | --dst-prop)
+    DST_PROP="$2"
     shift
     shift
     ;;
@@ -514,6 +525,7 @@ function zpool() {
   unset IFS
   echo "${split[0]}"
 }
+
 # command used to test if pool supports bookmarks
 # $1 zpool command
 # $2 dataset name
@@ -689,6 +701,22 @@ function zfs_snapshot_release_cmd() {
   fi
 }
 
+# command used to set property
+# $1 zfs command
+# $2 property=value
+# $3 dataset
+function zfs_set_cmd() {
+  echo "$1 set $2 $3"
+}
+
+# command used to inherit property
+# $1 zfs command
+# $2 property
+# $3 dataset
+function zfs_inherit_cmd() {
+  echo "$1 inherit $2 $3"
+}
+
 # command used to send a snapshot
 # $1 zfs command
 # $2 snapshot from name
@@ -722,7 +750,7 @@ function zfs_snapshot_send_cmd() {
 
 # command used to receive a snapshot
 # $1 zfs command
-# $2 snapshot name
+# $2 dst dataset
 # $3 is resume
 function zfs_snapshot_receive_cmd() {
   local cmd
@@ -735,9 +763,6 @@ function zfs_snapshot_receive_cmd() {
     fi
     if [ "$MOUNT" == "false" ]; then
       cmd="$cmd -u"
-    fi
-    if [ "$FIRST_RUN" == "true" ] && [ "$DST_EXITS" == "false " ]; then
-      cmd="$cmd -o readonly=on -o canmount=off"
     fi
     if [[ -z "$3" && ("$FIRST_RUN" == "true" || "$NO_OVERRIDE" == "false") ]]; then
       cmd="$cmd -F"
@@ -991,6 +1016,11 @@ function validate() {
     exit_code=$EXIT_INVALID_PARAM
   fi
 
+  if [ -n "$DST_PROP" ]; then
+    IFS=',' read -ra DST_PROP_ARRAY <<<"$DST_PROP"
+    unset IFS
+  fi
+
   if [ -n "$exit_code" ]; then
     echo
     usage
@@ -1044,14 +1074,12 @@ function validate() {
     FIRST_RUN=true
     log_debug "checking if destination dataset '$DST_DATASET' exists ..."
     if dataset_exists false; then
-      DST_EXITS=true
       log_debug "... '$DST_DATASET' exists."
       if [ "$SRC_ENCRYPTED" == "true" ]; then
         log_error "You cannot initially send an encrypted dataset into an existing one."
         stop $EXIT_ERROR
       fi
     else
-      DST_EXITS=false
       if ! dataset_exists false "$(dataset_parent $DST_DATASET)"; then
         log_error "Parent dataset $(dataset_parent $DST_DATASET) does not exist."
         stop $EXIT_ERROR
@@ -1256,6 +1284,28 @@ function do_backup() {
   log_info "sending snapshot ..."
   cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$SRC_SNAPSHOT_LAST_SYNCED" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
   if execute "$cmd"; then
+    if [ "$FIRST_RUN" == "true" ]; then
+      [ -n "$DST_PROP" ] && log_info "setting properties at destination ... "
+      for prop in "${DST_PROP_ARRAY[@]}"; do
+        if [[ "$prop" =~ .*inherit$ ]]; then
+          cmd="$(build_cmd "$DST_TYPE" "$(zfs_inherit_cmd "$ZFS_CMD_REMOTE" "${prop/=inherit/}" "$DST_DATASET")")"
+          if execute "$cmd"; then
+            log_debug "Property ${prop/=inherit/} inherited on destination dataset $DST_DATASET."
+          else
+            log_error "Error setting property $prop on destination dataset $DST_DATASET."
+            error=true
+          fi
+        else
+          cmd="$(build_cmd "$DST_TYPE" "$(zfs_set_cmd "$ZFS_CMD_REMOTE" "$prop" "$DST_DATASET")")"
+          if execute "$cmd"; then
+            log_debug "Property $prop set on destination dataset $DST_DATASET."
+          else
+            log_error "Error setting property $prop on destination dataset $DST_DATASET."
+            error=true
+          fi
+        fi
+      done
+    fi
     # reload destination snapshots to get last
     load_dst_snapshots
 
@@ -1348,10 +1398,10 @@ function do_backup() {
   fi
 
   if [ "$error" == "true" ]; then
-    log_error "Sync finished with errors."
+    log_error "... zfs-backup finished with errors."
     stop $EXIT_WARN
   else
-    log_info "Sync finished successful."
+    log_info "... zfs-backup finished successful."
     stop $EXIT_OK
   fi
 }
@@ -1414,6 +1464,10 @@ DST_DATASET=\"$DST_DATASET\"
 DST_TYPE=$DST_TYPE
 # $DST_COUNT_HELP
 DST_COUNT=$DST_COUNT
+# ${DST_PROP_HELP[0]}
+# ${DST_PROP_HELP[1]}
+# ${DST_PROP_HELP[2]}
+DST_PROP=$DST_PROP
 
 # Snapshot pre-/postfix and hold tag
 #SNAPSHOT_PREFIX=\"bkp\"
@@ -1486,6 +1540,7 @@ POST_SNAPSHOT=\"$POST_SNAPSHOT\"
 }
 
 function start() {
+  log_info "Starting zfs-backup ..."
   if [ -n "$ONLY_IF" ]; then
     log_debug "check if backup should be done ..."
     if execute "$ONLY_IF" "false"; then

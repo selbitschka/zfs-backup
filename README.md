@@ -35,6 +35,9 @@ Parameters
   -d,  --dst       [name]        Name of the receiving dataset (destination).
   -dt, --dst-type  [ssh|local]   Type of destination dataset (default: 'local').
   -ds, --dst-snaps [count]       Number (greater 0) of successful received snapshots to keep on destination side (default: 1).
+  -dp, --dst-prop  [properties]  Properties to set on destination after first sync. User ',' separated list of 'property=value'
+                                 If 'inherit' is used as value 'zfs inherit' is executed otherwise 'zfs set'.
+                                 Default: 'canmount=off,mountpoint=none,readonly=on'
   -i,  --id        [name]        Unique ID of backup destination (default: md5sum of destination dataset and ssh host, if present).
                                  Required if you use multiple destinations to identify snapshots. Maximum of 10 characters or numbers.
   --send-param     [parameters]  Parameters used for 'zfs send' command. If set these parameters are use and all other settings (see below) are ignored.
@@ -126,14 +129,14 @@ Create parent dataset on target (192.168.1.1) and give `zfsbackup` user required
 ```console
 ssh user@192.168.1.1
 sudo zfs create -o readonly=on -o canmount=off storage/zfsbackup
-sudo zfs allow -u zfsbackup compression,create,mount,mountpoint,receive storage/zfsbackup
-sudo zfs allow -d -u zfsbackup destroy,hold,release storage/zfsbackup
+sudo zfs allow -u zfsbackup compression,create,mount,receive storage/zfsbackup
+sudo zfs allow -d -u zfsbackup canmount,destroy,hold,mountpoint,readonly,release storage/zfsbackup
 sudo zfs allow storage/zfsbackup
 ---- Permissions on storage/zfsbackup ---------------------
 Descendent permissions:
-	user zfsbackup destroy,hold,release
+	user zfsbackup zfsbackup canmount,destroy,hold,mountpoint,readonly,release
 Local+Descendent permissions:
-	user zfsbackup compression,create,mount,mountpoint,receive
+	user zfsbackup compression,create,mount,receive
 ```
 Allow user `zfsbackup` to perform backup tasks on source dataset `rpool/data` (local machine)
 ```console

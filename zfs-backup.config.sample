@@ -38,6 +38,10 @@ DST_DATASET="tank/backup/data"
 DST_TYPE=ssh
 # Number (greater 0) of successful received snapshots to keep on destination side (default: 1).
 DST_COUNT=3
+# Properties to set on destination after first sync. User ',' separated list of 'property=value'
+# If 'inherit' is used as value 'zfs inherit' is executed otherwise 'zfs set'.
+# Default: 'canmount=off,mountpoint=none,readonly=on'
+DST_PROP="canmount=off,mountpoint=none,readonly=on"
 
 # Snapshot pre-/postfix and hold tag
 #SNAPSHOT_PREFIX="bkp"
