@@ -87,6 +87,7 @@ SSH_OPT="-o ConnectTimeout=10"
 #SSH_OPT="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 
 FIRST_RUN=false
+EXECUTION_ERROR=false
 
 # help text
 readonly SRC_DATASET_HELP="Name of the sending dataset (source)."
@@ -213,7 +214,7 @@ function help_permissions_send() {
   fi
   log_debug "Sending user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$SRC_TYPE" "zfs allow -u $current_user send,snapshot,hold,release,destroy,mount $SRC_DATASET")"
+  log_debug "zfs allow -u $current_user send,snapshot,hold,release,destroy,mount $SRC_DATASET"
 }
 
 function help_permissions_receive() {
@@ -225,8 +226,8 @@ function help_permissions_receive() {
   fi
   log_debug "Receiving user '$current_user' maybe has not enough rights."
   log_debug "To set right on sending side use:"
-  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -u $current_user compression,create,mount,receive $(dataset_parent $DST_DATASET)")"
-  log_debug "$(build_cmd "$DST_TYPE" "zfs allow -d -u $current_user canmount,destroy,hold,mountpoint,readonly,release $(dataset_parent $DST_DATASET)")"
+  log_debug "zfs allow -u $current_user compression,create,mount,receive $(dataset_parent $DST_DATASET)"
+  log_debug "zfs allow -d -u $current_user canmount,destroy,hold,mountpoint,readonly,release $(dataset_parent $DST_DATASET)"
 }
 
 # read all parameters
@@ -672,10 +673,16 @@ function zfs_snapshot_rename_cmd() {
 # $1 zfs command
 # $2 snapshot name
 function zfs_snapshot_destroy_cmd() {
-  if [ "$RECURSIVE" == "true" ]; then
-    echo "$1 destroy -r $2"
+  if [[ "$2" =~ .*[@#].* ]]; then
+    if [ "$RECURSIVE" == "true" ]; then
+      echo "$1 destroy -r $2"
+    else
+      echo "$1 destroy $2"
+    fi
   else
-    echo "$1 destroy $2"
+    log_error "Preventing destroy command for '$2' not containing '@' or '#', since we only destroy snapshots or bookmarks."
+    log_error "Abort backup."
+    stop $EXIT_ERROR
   fi
 }
 
@@ -728,7 +735,7 @@ function zfs_snapshot_send_cmd() {
     cmd="$cmd $SEND_PARAMETER"
   else
     cmd="$cmd $DEFAULT_SEND_PARAMETER"
-    if [ "$FIRST_RUN" == "true" ]; then
+    if [ "$FIRST_RUN" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
       cmd="$cmd -p"
     fi
     if [ "$SRC_ENCRYPTED" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
@@ -920,6 +927,97 @@ function dataset_resume_token() {
   log_cmd "$cmd"
   # shellcheck disable=SC2005
   echo "$($cmd)"
+}
+
+# $1 command
+# $2 no dryrun
+function execute() {
+  log_cmd "$1"
+  if [ "$DRYRUN" == "true" ] && [ -z "$2" ]; then
+    log_info "dryrun ... nothing done."
+    return 0
+  elif [ -n "$LOG_FILE" ]; then
+    eval $1 >>$LOG_FILE 2>&1
+    return
+  else
+    eval $1
+    return
+  fi
+}
+
+# $1 is source
+# $2 snapshot name
+function execute_snapshot_hold() {
+  local cmd
+  cmd=
+  if [ "$1" == "true" ]; then
+    cmd="$(build_cmd $SRC_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD "$2")")"
+  else
+    cmd="$(build_cmd $DST_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD_REMOTE "$2")")"
+  fi
+  log_info "hold snapshot $2 ..."
+  if execute "$cmd"; then
+      log_debug "... snapshot $2 hold tag '$SNAPSHOT_HOLD_TAG'."
+  else
+      log_error "Error hold snapshot $2."
+      EXECUTION_ERROR=true
+  fi
+  return
+}
+
+
+# $1 is source
+# $2 snapshot name
+function execute_snapshot_release() {
+  local cmd
+  if [ "$1" == "true" ]; then
+    cmd="$(build_cmd $SRC_TYPE "$(zfs_snapshot_release_cmd $ZFS_CMD "$2")")"
+  else
+    cmd="$(build_cmd $DST_TYPE "$(zfs_snapshot_release_cmd $ZFS_CMD_REMOTE "$2")")"
+  fi
+  log_info "... release snapshot $2"
+  if execute "$cmd"; then
+    log_debug "... snapshot $2 released tag '$SNAPSHOT_HOLD_TAG'."
+  else
+    log_error "Error releasing snapshot $2."
+    EXECUTION_ERROR=true
+  fi
+}
+
+# $1 is source
+# $2 snapshot name
+function execute_snapshot_destroy() {
+  local cmd
+  if [ "$1" == "true" ]; then
+    cmd="$(build_cmd $SRC_TYPE "$(zfs_snapshot_destroy_cmd $ZFS_CMD "$2")")"
+  else
+    cmd="$(build_cmd $DST_TYPE "$(zfs_snapshot_destroy_cmd $ZFS_CMD_REMOTE "$2")")"
+  fi
+  log_info "... destroying snapshot $2"
+  if execute "$cmd"; then
+    log_debug "... snapshot $2 destroyed."
+  else
+    log_error "Error destroying snapshot $2."
+    EXECUTION_ERROR=true
+  fi
+}
+
+# $1 is source
+# $2 bookmark name
+function execute_bookmark_destroy() {
+  local cmd
+  if [ "$1" == "true" ]; then
+    cmd="$(build_cmd $SRC_TYPE "$(zfs_bookmark_destroy_cmd $ZFS_CMD "$2")")"
+  else
+    cmd="$(build_cmd $DST_TYPE "$(zfs_bookmark_destroy_cmd $ZFS_CMD_REMOTE "$2")")"
+  fi
+  log_info "... destroying bookmark $2"
+  if execute "$cmd"; then
+    log_debug "... bookmark $2 destroyed."
+  else
+    log_error "Error destroying bookmark $2."
+    EXECUTION_ERROR=true
+  fi
 }
 
 function distro_dependent_commands() {
@@ -1195,9 +1293,9 @@ function load_dst_snapshots() {
 }
 
 function do_backup() {
-  local error
   local cmd
 
+  # looking for resume token and resume previous aborted sync if necessary
   if [ "$FIRST_RUN" == "false" ] && [ "$RESUME" == "true" ]; then
     log_info "Looking for resume token ..."
     local resume_token
@@ -1210,12 +1308,7 @@ function do_backup() {
         # reload destination snapshots to get last
         load_dst_snapshots
         # put hold on destination snapshot
-        log_info "hold snapshot $DST_SNAPSHOT_LAST ..."
-        cmd=$(build_cmd $DST_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD_REMOTE "$DST_SNAPSHOT_LAST")")
-        if ! execute "$cmd"; then
-          log_error "Error hold snapshot $DST_SNAPSHOT_LAST."
-          error=true
-        fi
+        execute_snapshot_hold false "$DST_SNAPSHOT_LAST"
         log_info "Continue with new sync ..."
       else
         log_error "Error resuming previous aborted sync."
@@ -1243,7 +1336,7 @@ function do_backup() {
   if [ -n "$POST_SNAPSHOT" ]; then
     if ! execute "$POST_SNAPSHOT"; then
       log_error "Error executing post snapshot command/script ..."
-      error=true
+      EXECUTION_ERROR=true
     fi
   fi
   # reload source snapshots to get last
@@ -1261,12 +1354,7 @@ function do_backup() {
 
   # put hold on source snapshot
   if [ "$NO_HOLD" = "false" ] && [ "$BOOKMARK" == "false" ]; then
-    log_info "hold snapshot $snap ..."
-    cmd=$(build_cmd $SRC_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")
-    if ! execute "$cmd"; then
-      log_error "Error hold snapshot $snap."
-      error=true
-    fi
+    execute_snapshot_hold true "$SRC_SNAPSHOT_LAST"
   fi
 
   if [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
@@ -1289,7 +1377,7 @@ function do_backup() {
             log_debug "Property ${prop/=inherit/} inherited on destination dataset $DST_DATASET."
           else
             log_error "Error setting property $prop on destination dataset $DST_DATASET."
-            error=true
+            EXECUTION_ERROR=true
           fi
         else
           cmd="$(build_cmd "$DST_TYPE" "$(zfs_set_cmd "$ZFS_CMD_REMOTE" "$prop" "$DST_DATASET")")"
@@ -1297,7 +1385,7 @@ function do_backup() {
             log_debug "Property $prop set on destination dataset $DST_DATASET."
           else
             log_error "Error setting property $prop on destination dataset $DST_DATASET."
-            error=true
+            EXECUTION_ERROR=true
           fi
         fi
       done
@@ -1306,27 +1394,17 @@ function do_backup() {
     load_dst_snapshots
 
     # put hold on destination snapshot
-    log_info "hold snapshot $DST_SNAPSHOT_LAST ..."
-    cmd=$(build_cmd $DST_TYPE "$(zfs_snapshot_hold_cmd $ZFS_CMD_REMOTE "$DST_SNAPSHOT_LAST")")
-    if ! execute "$cmd"; then
-      log_error "Error hold snapshot $DST_SNAPSHOT_LAST."
-      error=true
-    fi
+    execute_snapshot_hold false "$DST_SNAPSHOT_LAST"
 
     # convert snapshot to bookmark
     if [ "$BOOKMARK" == "true" ]; then
       log_info "converting snapshot '$SRC_SNAPSHOT_LAST' to bookmark ..."
       cmd="$(build_cmd "$SRC_TYPE" "$(zfs_bookmark_create_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")"
       if execute "$cmd"; then
-        log_info "destroying snapshot '$SRC_SNAPSHOT_LAST' ..."
-        cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_destroy_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")"
-        if ! execute "$cmd"; then
-          log_error "Error destroying bookmarked snapshot '$SRC_SNAPSHOT_LAST'."
-          error=true
-        fi
+        execute_snapshot_destroy true "$SRC_SNAPSHOT_LAST"
       else
         log_error "Error converting snapshot to bookmark."
-        error=true
+        EXECUTION_ERROR=true
       fi
     fi
   else
@@ -1336,12 +1414,10 @@ function do_backup() {
       log_info "Keeping unsent snapshot $SRC_SNAPSHOT_LAST for later send."
     else
       log_info "Destroying unsent snapshot $SRC_SNAPSHOT_LAST ..."
-      cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_destroy_cmd $ZFS_CMD "$SRC_SNAPSHOT_LAST")")"
-      if execute "$cmd"; then
-        log_info "... snapshot destroyed."
-      else
-        log_error "Error destroying snapshot $SRC_SNAPSHOT_LAST"
+      if [ "$NO_HOLD" = "false" ]; then
+        execute_snapshot_release true "$SRC_SNAPSHOT_LAST"
       fi
+      execute_snapshot_destroy true "$SRC_SNAPSHOT_LAST"
     fi
     stop $EXIT_ERROR
   fi
@@ -1349,72 +1425,35 @@ function do_backup() {
   # cleanup successfully send snapshots on both sides
   load_src_snapshots
   if [ ${#SRC_SNAPSHOTS[@]} -gt "$SRC_COUNT" ]; then
-    log_info "Deleting old source snapshots ..."
+    log_info "Destroying old source snapshots ..."
     for snap in "${SRC_SNAPSHOTS[@]::${#SRC_SNAPSHOTS[@]}-$SRC_COUNT}"; do
       if [[ "$snap" =~ @ ]]; then
         if [ "$NO_HOLD" = "false" ]; then
-          log_info "... release snapshot $snap"
-          cmd=$(build_cmd $SRC_TYPE "$(zfs_snapshot_release_cmd $ZFS_CMD "$snap")")
-          if ! execute "$cmd"; then
-            log_error "Error releasing snapshot $snap."
-            error=true
-          fi
+          execute_snapshot_release true "$snap"
         fi
-        log_info "... deleting snapshot $snap"
-        cmd=$(build_cmd $SRC_TYPE "$(zfs_snapshot_destroy_cmd $ZFS_CMD "$snap")")
+        execute_snapshot_destroy true "$snap"
       else
-        log_info "... deleting bookmark $snap"
-        cmd=$(build_cmd $SRC_TYPE "$(zfs_bookmark_destroy_cmd $ZFS_CMD "$snap")")
-      fi
-      if ! execute "$cmd"; then
-        log_error "Error destroying snapshot/bookmark $snap."
-        error=true
+        execute_bookmark_destroy true "$snap"
       fi
     done
   fi
 
   if [ ${#DST_SNAPSHOTS[@]} -gt "$DST_COUNT" ]; then
-    log_info "Deleting old destination snapshots ..."
+    log_info "Destroying old destination snapshots ..."
     for snap in "${DST_SNAPSHOTS[@]::${#DST_SNAPSHOTS[@]}-$DST_COUNT}"; do
       if [ "$NO_HOLD" = "false" ]; then
-        log_info "... release snapshot $snap"
-        cmd=$(build_cmd $DST_TYPE "$(zfs_snapshot_release_cmd $ZFS_CMD_REMOTE "$snap")")
-        if ! execute "$cmd"; then
-          log_error "Error releasing snapshot $snap."
-          error=true
-        fi
+        execute_snapshot_release false "$snap"
       fi
-      log_info "... deleting snapshot $snap"
-      cmd=$(build_cmd $DST_TYPE "$(zfs_snapshot_destroy_cmd $ZFS_CMD_REMOTE "$snap")")
-      if ! execute "$cmd"; then
-        log_error "Error destroying snapshot $snap."
-        error=true
-      fi
+      execute_snapshot_destroy false "$snap"
     done
   fi
 
-  if [ "$error" == "true" ]; then
+  if [ "$EXECUTION_ERROR" == "true" ]; then
     log_error "... zfs-backup finished with errors."
     stop $EXIT_WARN
   else
     log_info "... zfs-backup finished successful."
     stop $EXIT_OK
-  fi
-}
-
-# $1 command
-# $2 no dryrun
-function execute() {
-  log_cmd "$1"
-  if [ "$DRYRUN" == "true" ] && [ -z "$2" ]; then
-    log_info "dryrun ... nothing done."
-    return 0
-  elif [ -n "$LOG_FILE" ]; then
-    eval $1 >>$LOG_FILE 2>&1
-    return
-  else
-    eval $1
-    return
   fi
 }
 
