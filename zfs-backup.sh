@@ -371,8 +371,8 @@ while [[ $# -gt 0 ]]; do
     shift
     shift
     ;;
-  --SSH_KEY)
-    SSH_HOST="$2"
+  --ssh_key)
+    SSH_KEY="$2"
     shift
     shift
     ;;
@@ -924,65 +924,68 @@ function dataset_resume_token() {
 
 function distro_dependent_commands() {
   local cmd
-  local path
   local zfs_path
   local distro
   local release
 
-  if [[ -z "$ZFS_CMD" || -z "$ZPOOL_CMD" || (-z "$MD5SUM_CMD" && -z "$ID") || (-z "$SSH_CMD" && "$SRC_TYPE" == "$TYPE_SSH") ]]; then
-    distro=$($(build_cmd "$SRC_TYPE" "lsb_release --id --short"))
+  if [ -z "$SSH_CMD" ]; then
+    SSH_CMD=$(command -v ssh)
+  fi
+
+  if [ -z "$MD5SUM_CMD" ]; then
+    MD5SUM_CMD=$(command -v md5sum)
+  fi
+
+  if [[ -z "$ZFS_CMD" || -z "$ZPOOL_CMD" ]]; then
+    cmd="$(build_cmd $SRC_TYPE "lsb_release --id --short")"
+    echo "$cmd"
+    log_debug "determining source commands ..."
+    log_cmd "$cmd"
+    distro=$($cmd)
     case $distro in
     Ubuntu)
-      release=$($(build_cmd "$SRC_TYPE" "lsb_release --release --short"))
+      release=$($(build_cmd $SRC_TYPE "lsb_release --release --short"))
       if [[ "${release:0:2}" -gt 19 ]]; then
         zfs_path="/usr/sbin/"
-        path="/usr/bin/"
       else
         zfs_path="/sbin/"
-        path="/usr/bin/"
       fi
       ;;
     Linuxmint)
       zfs_path="/sbin/"
-      path="/usr/bin/"
       ;;
     *)
       zfs_path="/sbin/"
-      path="/usr/bin/"
       ;;
     esac
 
     [ -z "$ZFS_CMD" ] && ZFS_CMD="${zfs_path}zfs"
     [ -z "$ZPOOL_CMD" ] && ZPOOL_CMD="${zfs_path}zpool"
-    [ -z "$SSH_CMD" ] && SSH_CMD="${path}ssh"
-    [ -z "$MD5SUM_CMD" ] && MD5SUM_CMD="${path}md5sum"
   fi
 
-  if [[ -z "$ZFS_CMD_REMOTE" || -z "$ZPOOL_CMD_REMOTE" || (-z "$SSH_CMD" && "$DST_TYPE" == "$TYPE_SSH") ]]; then
-    distro=$($(build_cmd "$DST_TYPE" "lsb_release --id --short"))
+  if [[ -z "$ZFS_CMD_REMOTE" || -z "$ZPOOL_CMD_REMOTE" ]]; then
+    cmd="$(build_cmd $DST_TYPE "lsb_release --id --short")"
+    log_debug "determining destination commands ..."
+    log_cmd "$cmd"
+    distro=$($cmd)
     case $distro in
     Ubuntu)
-      release=$($(build_cmd "$DST_TYPE" "lsb_release --release --short"))
+      release=$($(build_cmd $DST_TYPE "lsb_release --release --short"))
       if [[ "${release:0:2}" -gt 19 ]]; then
         zfs_path="/usr/sbin/"
-        path="/usr/bin/"
       else
         zfs_path="/sbin/"
-        path="/usr/bin/"
       fi
       ;;
     Linuxmint)
       zfs_path="/sbin/"
-      path="/usr/bin/"
       ;;
     *)
-      path=""
       ;;
     esac
 
     [ -z "$ZFS_CMD_REMOTE" ] && ZFS_CMD_REMOTE="${zfs_path}zfs"
     [ -z "$ZPOOL_CMD_REMOTE" ] && ZPOOL_CMD_REMOTE="${zfs_path}zpool"
-    [ -z "$SSH_CMD" ] && SSH_CMD="${path}ssh"
   fi
 }
 
@@ -1029,7 +1032,7 @@ function validate() {
 
   log_debug "checking if source dataset '$SRC_DATASET' exists ..."
   if dataset_exists true; then
-    log_debug "... exits."
+    log_debug "... '$SRC_DATASET' exits."
   else
     log_error "Source dataset '$SRC_DATASET' does not exists."
     dataset_list true
@@ -1080,6 +1083,7 @@ function validate() {
         stop $EXIT_ERROR
       fi
     else
+      log_debug "... '$DST_DATASET' does not exist."
       if ! dataset_exists false "$(dataset_parent $DST_DATASET)"; then
         log_error "Parent dataset $(dataset_parent $DST_DATASET) does not exist."
         stop $EXIT_ERROR
@@ -1247,7 +1251,12 @@ function do_backup() {
 
   if [ -z "$SRC_SNAPSHOT_LAST" ]; then
     log_error "No snapshot found."
-    stop $EXIT_ERROR
+    if [ "$DRYRUN" == "true" ]; then
+      log_info "dryrun using dummy snapshot '$SRC_DATASET@dryrun_snapshot_$(date_text)' ..."
+      SRC_SNAPSHOT_LAST="$SRC_DATASET@dryrun_snapshot_$(date_text)"
+    else
+      stop $EXIT_ERROR
+    fi
   fi
 
   # put hold on source snapshot
