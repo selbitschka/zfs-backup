@@ -2,7 +2,7 @@
 # shellcheck disable=SC2091
 # shellcheck disable=SC2086
 
-readonly VERSION='0.0.1'
+readonly VERSION='0.9.0'
 
 # return codes
 readonly EXIT_OK=0
@@ -1537,7 +1537,7 @@ NO_OVERRIDE=$NO_OVERRIDE
 # $NO_HOLD_HELP
 NO_HOLD=$NO_HOLD
 # $DEBUG_HELP
-DEBUG=false
+DEBUG=$DEBUG
 
 # $SEND_PARAMETER_HELP
 SEND_PARAMETER=\"$SEND_PARAMETER\"
@@ -1547,6 +1547,8 @@ RECEIVE_PARAMETER=\"$RECEIVE_PARAMETER\"
 ## Scripts and commands
 # ${ONLY_IF_HELP[0]}
 # ${ONLY_IF_HELP[1]}
+# ${ONLY_IF_HELP[3]}
+# ${ONLY_IF_HELP[4]}
 ONLY_IF=\"$ONLY_IF\"
 # $PRE_RUN_HELP
 PRE_RUN=\"$PRE_RUN\"
