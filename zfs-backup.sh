@@ -1062,7 +1062,7 @@ function validate() {
         BOOKMARK=false
       fi
     fi
-  else
+  elif [ "$BOOKMARK" == "true" ]; then
     log_warn "Bookmark option --bookmark will be ignored since you are using a snapshot count $SRC_COUNT which is greater then 1."
     BOOKMARK=false
   fi
@@ -1129,29 +1129,16 @@ function load_src_snapshots() {
   escaped_src_dataset="${SRC_DATASET//\//\\/}"
   # shellcheck disable=SC1087
   pattern="^$escaped_src_dataset[@#]${SNAPSHOT_PREFIX}_${ID}.*"
-  if [ "$BOOKMARK" == "true" ]; then
-    log_debug "getting source snapshot and bookmark list ..."
-    log_debug "... filter with pattern $pattern"
-    for snap in $(dataset_list_snapshots_bookmarks true); do
-      if [[ "$snap" =~ $pattern ]]; then
-        SRC_SNAPSHOTS+=("$snap")
-        log_debug "... add $snap"
-      else
-        log_debug "... $snap does not match pattern."
-      fi
-    done
-  else
-    log_debug "getting source snapshot list ..."
-    log_debug "... filter with pattern $pattern"
-    for snap in $(dataset_list_snapshots true); do
-      if [[ "$snap" =~ $pattern ]]; then
-        SRC_SNAPSHOTS+=("$snap")
-        log_debug "... add $snap"
-      else
-        log_debug "... $snap does not match pattern."
-      fi
-    done
-  fi
+  log_debug "getting source snapshot and bookmark list ..."
+  log_debug "... filter with pattern $pattern"
+  for snap in $(dataset_list_snapshots_bookmarks true); do
+    if [[ "$snap" =~ $pattern ]]; then
+      SRC_SNAPSHOTS+=("$snap")
+      log_debug "... add $snap"
+    else
+      log_debug "... $snap does not match pattern."
+    fi
+  done
 
   if [ ${#SRC_SNAPSHOTS[@]} -gt 0 ]; then
     SRC_SNAPSHOT_LAST=${SRC_SNAPSHOTS[*]: -1}
