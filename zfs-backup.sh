@@ -2,7 +2,7 @@
 # shellcheck disable=SC2091
 # shellcheck disable=SC2086
 
-readonly VERSION='0.9.0'
+readonly VERSION='0.9.5'
 
 # return codes
 readonly EXIT_OK=0
@@ -48,6 +48,8 @@ SRC_SNAPSHOT_LAST_SYNCED=
 
 DST_DATASET=
 DST_TYPE=$TYPE_LOCAL
+DST_ENCRYPTED=false
+DST_DECRYPT=false
 DST_COUNT=1
 DST_SNAPSHOTS=()
 DST_SNAPSHOT_LAST=
@@ -89,12 +91,15 @@ SSH_OPT="-o ConnectTimeout=10"
 FIRST_RUN=false
 EXECUTION_ERROR=false
 
+RESTORE=false
+RESTORE_DESTROY=false
+
 # help text
 readonly SRC_DATASET_HELP="Name of the sending dataset (source)."
-readonly SRC_TYPE_HELP="Type of source dataset: '$TYPE_LOCAL' or '$TYPE_LOCAL' (default: local)."
+readonly SRC_TYPE_HELP="Type of source dataset: '$TYPE_LOCAL' or '$TYPE_SSH' (default: local)."
 readonly SRC_COUNT_HELP="Number (greater 0) of successful sent snapshots to keep on source side (default: 1)."
 readonly DST_DATASET_HELP="Name of the receiving dataset (destination)."
-readonly DST_TYPE_HELP="Type of destination dataset (default: 'local')."
+readonly DST_TYPE_HELP="Type of destination dataset: '$TYPE_LOCAL' or '$TYPE_SSH' (default: 'local')."
 readonly DST_COUNT_HELP="Number (greater 0) of successful received snapshots to keep on destination side (default: 1)."
 readonly DST_PROP_HELP=("Properties to set on destination after first sync. User ',' separated list of 'property=value'" "If 'inherit' is used as value 'zfs inherit' is executed otherwise 'zfs set'." "Default: '$DST_PROP'")
 
@@ -122,6 +127,9 @@ readonly PRE_RUN_HELP="Command or script to be executed before anything else is 
 readonly POST_RUN_HELP="Command or script to be executed after the this script is finished."
 readonly PRE_SNAPSHOT_HELP="Command or script to be executed before snapshot is made (i.e. to lock databases)."
 readonly POST_SNAPSHOT_HELP="Command or script to be executed after snapshot is made."
+
+readonly RESTORE_HELP="Restore a previous made backup. Source and destination are switched and the lastest snapshot will be restored."
+readonly RESTORE_DESTROY_HELP="WARNING if this option is set option '-F' is used during receive and the existing dataset will be destroyed."
 
 usage() {
   local usage
@@ -179,6 +187,9 @@ Parameters
   --pre-snapshot   [command]     $PRE_SNAPSHOT_HELP
   --post-snapshot  [command]     $POST_SNAPSHOT_HELP
 
+  --restore                      $RESTORE_HELP
+  --restore-destroy              $RESTORE_DESTROY_HELP
+
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
   --version                      Print version.
@@ -230,182 +241,192 @@ function help_permissions_receive() {
   log_debug "zfs allow -d -u $current_user canmount,destroy,hold,mountpoint,readonly,release $(dataset_parent $DST_DATASET)"
 }
 
-# read all parameters
-POSITIONAL=()
-while [[ $# -gt 0 ]]; do
-  key="$1"
-  case $key in
-  -c | --config)
-    CONFIG_FILE="$2"
-    shift
-    shift
-    ;;
-  --create-config)
-    MAKE_CONFIG=true
-    shift
-    ;;
-  -i | --id)
-    ID="${2:0:$ID_LENGTH}"
-    shift
-    shift
-    ;;
-  -s | --src)
-    SRC_DATASET="$2"
-    shift
-    shift
-    ;;
-  -st | --src-type)
-    SRC_TYPE="$2"
-    shift
-    shift
-    ;;
-  -ss | --src-snaps)
-    SRC_COUNT="$2"
-    shift
-    shift
-    ;;
-  -d | --dst)
-    DST_DATASET="$2"
-    shift
-    shift
-    ;;
-  -dt | --dst-type)
-    DST_TYPE="$2"
-    shift
-    shift
-    ;;
-  -ds | --dst-snaps)
-    DST_COUNT="$2"
-    shift
-    shift
-    ;;
-  -dp | --dst-prop)
-    DST_PROP="$2"
-    shift
-    shift
-    ;;
-  --send-param)
-    if [ "${2:0:1}" == "-" ]; then
-      SEND_PARAMETER="$2"
-    else
-      SEND_PARAMETER="-$2"
-    fi
-    shift
-    ;;
-  --recv-param)
-    if [ "${2:0:1}" == "-" ]; then
-      RECEIVE_PARAMETER="$2"
-    else
-      RECEIVE_PARAMETER="-$2"
-    fi
-    shift
-    ;;
-  --bookmark)
-    BOOKMARK=true
-    shift
-    ;;
-    #  --recursive)
-    #    RECURSIVE=true
-    #    shift
-    #    ;;
-  --resume)
-    RESUME=true
-    shift
-    ;;
-  --intermediary)
-    INTERMEDIATE=true
-    shift
-    ;;
-  --mount)
-    MOUNT=true
-    shift
-    ;;
-  --no-override)
-    NO_OVERRIDE=true
-    shift
-    ;;
-  --decrypt)
-    SRC_DECRYPT=true
-    shift
-    ;;
-  --no-holds)
-    NO_HOLD=true
-    shift
-    ;;
-  --only-if)
-    ONLY_IF="$2"
-    shift
-    shift
-    ;;
-  --pre-snapshot)
-    PRE_SNAPSHOT="$2"
-    shift
-    shift
-    ;;
-  --post-snapshot)
-    POST_SNAPSHOT="$2"
-    shift
-    shift
-    ;;
-  --pre-run)
-    PRE_RUN="$2"
-    shift
-    shift
-    ;;
-  --post-run)
-    POST_RUN="$2"
-    shift
-    shift
-    ;;
-  --ssh_host)
-    SSH_HOST="$2"
-    shift
-    shift
-    ;;
-  --ssh_port)
-    SSH_PORT="$2"
-    shift
-    shift
-    ;;
-  --ssh_user)
-    SSH_USER="$2"
-    shift
-    shift
-    ;;
-  --ssh_key)
-    SSH_KEY="$2"
-    shift
-    shift
-    ;;
-  --ssh_opt)
-    SSH_OPT="$2"
-    shift
-    shift
-    ;;
-  -v | --verbose)
-    DEBUG=true
-    shift
-    ;;
-  --dryrun)
-    DRYRUN=true
-    shift
-    ;;
-  --version)
-    echo "zfs-backup $VERSION"
-    exit $EXIT_OK
-    ;;
-  -h | --help)
-    usage
-    help
-    exit $EXIT_OK
-    ;;
-  *) # unknown option
-    POSITIONAL+=("$1") # save it in an array for later
-    shift              # past argument
-    ;;
-  esac
-done
-set -- "${POSITIONAL[@]}" # restore positional parameters
+function load_parameter() {
+  # read all parameters
+  POSITIONAL=()
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+    -c | --config)
+      CONFIG_FILE="$2"
+      shift
+      shift
+      ;;
+    --create-config)
+      MAKE_CONFIG=true
+      shift
+      ;;
+    -i | --id)
+      ID="${2:0:$ID_LENGTH}"
+      shift
+      shift
+      ;;
+    -s | --src)
+      SRC_DATASET="$2"
+      shift
+      shift
+      ;;
+    -st | --src-type)
+      SRC_TYPE="$2"
+      shift
+      shift
+      ;;
+    -ss | --src-snaps)
+      SRC_COUNT="$2"
+      shift
+      shift
+      ;;
+    -d | --dst)
+      DST_DATASET="$2"
+      shift
+      shift
+      ;;
+    -dt | --dst-type)
+      DST_TYPE="$2"
+      shift
+      shift
+      ;;
+    -ds | --dst-snaps)
+      DST_COUNT="$2"
+      shift
+      shift
+      ;;
+    -dp | --dst-prop)
+      DST_PROP="$2"
+      shift
+      shift
+      ;;
+    --send-param)
+      if [ "${2:0:1}" == "-" ]; then
+        SEND_PARAMETER="$2"
+      else
+        SEND_PARAMETER="-$2"
+      fi
+      shift
+      ;;
+    --recv-param)
+      if [ "${2:0:1}" == "-" ]; then
+        RECEIVE_PARAMETER="$2"
+      else
+        RECEIVE_PARAMETER="-$2"
+      fi
+      shift
+      ;;
+    --bookmark)
+      BOOKMARK=true
+      shift
+      ;;
+      #  --recursive)
+      #    RECURSIVE=true
+      #    shift
+      #    ;;
+    --resume)
+      RESUME=true
+      shift
+      ;;
+    --intermediary)
+      INTERMEDIATE=true
+      shift
+      ;;
+    --mount)
+      MOUNT=true
+      shift
+      ;;
+    --no-override)
+      NO_OVERRIDE=true
+      shift
+      ;;
+    --decrypt)
+      SRC_DECRYPT=true
+      shift
+      ;;
+    --no-holds)
+      NO_HOLD=true
+      shift
+      ;;
+    --only-if)
+      ONLY_IF="$2"
+      shift
+      shift
+      ;;
+    --pre-snapshot)
+      PRE_SNAPSHOT="$2"
+      shift
+      shift
+      ;;
+    --post-snapshot)
+      POST_SNAPSHOT="$2"
+      shift
+      shift
+      ;;
+    --pre-run)
+      PRE_RUN="$2"
+      shift
+      shift
+      ;;
+    --post-run)
+      POST_RUN="$2"
+      shift
+      shift
+      ;;
+    --ssh_host)
+      SSH_HOST="$2"
+      shift
+      shift
+      ;;
+    --ssh_port)
+      SSH_PORT="$2"
+      shift
+      shift
+      ;;
+    --ssh_user)
+      SSH_USER="$2"
+      shift
+      shift
+      ;;
+    --ssh_key)
+      SSH_KEY="$2"
+      shift
+      shift
+      ;;
+    --ssh_opt)
+      SSH_OPT="$2"
+      shift
+      shift
+      ;;
+    -v | --verbose)
+      DEBUG=true
+      shift
+      ;;
+    --dryrun)
+      DRYRUN=true
+      shift
+      ;;
+    --restore)
+      RESTORE=true
+      shift
+      ;;
+    --restore-destroy)
+      RESTORE_DESTROY=true
+      shift
+      ;;
+    --version)
+      echo "zfs-backup $VERSION"
+      exit $EXIT_OK
+      ;;
+    -h | --help)
+      usage
+      help
+      exit $EXIT_OK
+      ;;
+    *) # unknown option
+      POSITIONAL+=("$1") # save it in an array for later
+      shift              # past argument
+      ;;
+    esac
+  done
+  set -- "${POSITIONAL[@]}" # restore positional parameters
+}
 
 # print log output
 # $1 log message, $2 severity pattern
@@ -870,12 +891,21 @@ function dataset_exists() {
 }
 
 # $1 is source
+# $2 optional dataset
 function dataset_encrypted() {
   local cmd
   if [ "$1" == "true" ]; then
-    cmd="$(build_cmd "$SRC_TYPE" "$(zfs_encryption_cmd $ZFS_CMD "$SRC_DATASET")")"
+    if [ -z "$2" ]; then
+      cmd="$(build_cmd "$SRC_TYPE" "$(zfs_encryption_cmd $ZFS_CMD "$SRC_DATASET")")"
+    else
+      cmd="$(build_cmd "$SRC_TYPE" "$(zfs_encryption_cmd $ZFS_CMD "$2")")"
+    fi
   else
-    cmd="$(build_cmd "$DST_TYPE" "$(zfs_encryption_cmd $ZFS_CMD_REMOTE "$DST_DATASET")")"
+    if [ -z "$2" ]; then
+      cmd="$(build_cmd "$DST_TYPE" "$(zfs_encryption_cmd $ZFS_CMD_REMOTE "$DST_DATASET")")"
+    else
+      cmd="$(build_cmd "$DST_TYPE" "$(zfs_encryption_cmd $ZFS_CMD_REMOTE "$2")")"
+    fi
   fi
   log_cmd "$cmd"
   [[ ! $($cmd) == "off" ]] &>/dev/null
@@ -1087,7 +1117,7 @@ function distro_dependent_commands() {
   fi
 }
 
-function validate() {
+function validate_backup() {
   local exit_code
   if [ -z "$SRC_DATASET" ]; then
     log_error "Missing parameter -s | --source for sending dataset (source)."
@@ -1218,6 +1248,118 @@ function validate() {
       log_error "Please delete all snapshots on both sides and start with full sync."
       stop $EXIT_ERROR
     fi
+  fi
+}
+
+function validate_restore() {
+  local exit_code
+  if [ -z "$SRC_DATASET" ]; then
+    log_error "Missing parameter -s | --source for sending dataset (source)."
+    exit_code=$EXIT_MISSING_PARAM
+  fi
+  if [ -z "$DST_DATASET" ]; then
+    log_error "Missing parameter -d | --dest for receiving dataset (destination)."
+    exit_code=$EXIT_MISSING_PARAM
+  fi
+
+  if [ "$SRC_TYPE" == "$TYPE_SSH" ] && [ "$DST_TYPE" == "$TYPE_SSH" ]; then
+    log_error "You can use type 'ssh' only for source or destination but not both."
+    exit_code=$EXIT_INVALID_PARAM
+  elif [ "$SRC_TYPE" == "$TYPE_SSH" ] || [ "$DST_TYPE" == "$TYPE_SSH" ]; then
+    if [ -z "$SSH_HOST" ]; then
+      log_error "Missing parameter --ssh_host for receiving host."
+      exit_code=$EXIT_MISSING_PARAM
+    fi
+  fi
+
+  if [ -z "$ID" ]; then
+    ID="$($MD5SUM_CMD <<<"$DST_DATASET$SSH_HOST")"
+    ID="${ID:0:$ID_LENGTH}"
+  fi
+  if ! [[ "$ID" =~ ^[a-zA-Z0-9]*$ ]]; then
+    log_error "ID -i must only contain characters and numbers. You used '$ID'"
+    exit_code=$EXIT_INVALID_PARAM
+  fi
+
+  if [ -n "$DST_PROP" ]; then
+    IFS=',' read -ra DST_PROP_ARRAY <<<"$DST_PROP"
+    unset IFS
+  fi
+
+  if [ -n "$exit_code" ]; then
+    echo
+    usage
+    stop $exit_code
+  fi
+
+  log_debug "checking if destination dataset '$DST_DATASET' exists ..."
+  if dataset_exists false; then
+    log_debug "... '$DST_DATASET' exists."
+    log_debug "checking if destination dataset '$DST_DATASET' is encrypted ..."
+    if dataset_encrypted false; then
+      log_debug "... destination is encrypted"
+      DST_ENCRYPTED=true
+      log_debug "checking if source pool supports encryption ..."
+      if pool_support_encryption true; then
+        log_debug "... encryption supported on source side."
+      else
+        log_info "Destination dataset '$DST_DATASET' is encrypted but restore pool does not support encryption. Restore will be decrypted."
+        DST_DECRYPT=true
+      fi
+    else
+      log_debug "... destination is not encrypted"
+    fi
+  else
+    log_error "Destination dataset '$DST_DATASET' does not exists."
+    dataset_list false
+    stop $EXIT_ERROR
+  fi
+
+  log_debug "checking if source dataset '$SRC_DATASET' exists ..."
+  if dataset_exists true; then
+    log_debug "checking if source dataset '$SRC_DATASET' is encrypted ..."
+    if dataset_encrypted true; then
+      log_debug "... source is encrypted"
+      SRC_ENCRYPTED=true
+    else
+      log_debug "... source is not encrypted"
+    fi
+    if [ "$SRC_ENCRYPTED" == "true" ] || [ "$DST_ENCRYPTED" == "true" ]; then
+      log_error "... $SRC_DATASET exists and source or destination are encrypted. A restore of encrypted data or to an encrypted existing dataset is not possible."
+      stop $EXIT_ERROR
+    elif [ "$RESTORE_DESTROY" == "true" ]; then
+      log_info "... '$SRC_DATASET' exits and will be destroyed during restore."
+    else
+      log_error "... '$SRC_DATASET' exits no restore possible. Please destroy dataset or use --restore-destroy to override existing data."
+      stop $EXIT_ERROR
+    fi
+  else
+    log_info "... '$SRC_DATASET' does not exits."
+    log_info "checking parent dataset '$(dataset_parent $SRC_DATASET)' ..."
+    if dataset_exists true "$(dataset_parent $SRC_DATASET)"; then
+      log_debug "Parent dataset $(dataset_parent $DST_DATASET) exist."
+      if dataset_encrypted true "$(dataset_parent $SRC_DATASET)"; then
+        log_debug "... parent dataset is encrypted."
+        if [ "$DST_ENCRYPTED" == "true" ]; then
+          log_info "... source and destination dataset are encrypted, we decrypt data during restore."
+          DST_DECRYPT=true
+        fi
+      else
+        log_debug "... parent dataset is not encrypted."
+      fi
+    else
+      log_error "Parent dataset $(dataset_parent $SRC_DATASET) does not exist."
+      stop $EXIT_ERROR
+    fi
+  fi
+
+  # check if destination snapshot exists
+  load_dst_snapshots
+  if [ -z "$DST_SNAPSHOT_LAST" ]; then
+    log_error "Destination does not have a snapshot to restore."
+    stop $EXIT_ERROR
+  else
+    log_info "Restore last destination snapshot '$DST_SNAPSHOT_LAST'."
   fi
 }
 
@@ -1457,6 +1599,20 @@ function do_backup() {
   fi
 }
 
+function do_restore() {
+  local cmd
+  # sending snapshot
+  log_info "restoring snapshot '$DST_SNAPSHOT_LAST' to '$SRC_DATASET' ..."
+  cmd="$(build_cmd "$DST_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD_REMOTE" "$DST_SNAPSHOT_LAST")") | $(build_cmd "$SRC_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD" "$SRC_DATASET")")"
+  if execute "$cmd"; then
+    log_info "... finished restore of snapshot '$DST_SNAPSHOT_LAST' to '$SRC_DATASET'."
+    log_info "... zfs-backup finished successful."
+  else
+    log_error "Error restoring snapshot."
+    stop $EXIT_ERROR
+  fi
+}
+
 function create_config() {
   local config
   config="#######
@@ -1576,7 +1732,7 @@ POST_SNAPSHOT=\"$POST_SNAPSHOT\"
   fi
 }
 
-function start() {
+function start_backup() {
   log_info "Starting zfs-backup ..."
   if [ -n "$ONLY_IF" ]; then
     log_debug "check if backup should be done ..."
@@ -1593,6 +1749,7 @@ function start() {
       log_debug "... done"
     else
       log_error "Error executing pre run script, abort backup."
+      exit $EXIT_ERROR
     fi
   fi
 }
@@ -1612,11 +1769,18 @@ function stop() {
 
 # main function calls
 load_config
-start
+load_parameter
+start_backup
 distro_dependent_commands
-validate
-if [ "$MAKE_CONFIG" == "true" ]; then
-  create_config
+if [ "$RESTORE" == "true" ]; then
+  validate_restore
+  do_restore
 else
-  do_backup
+  validate_backup
+  if [ "$MAKE_CONFIG" == "true" ]; then
+    create_config
+  else
+    do_backup
+  fi
 fi
+
