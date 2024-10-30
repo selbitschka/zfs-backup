@@ -1277,10 +1277,6 @@ function validate_backup() {
 
 function validate_restore() {
   local exit_code
-  # these parameters are always false on restore
-  RECURSIVE=false
-  RESUME=false
-  FIRST_RUN=false
 
   if [ -z "$SRC_DATASET" ]; then
     log_error "Missing parameter -s | --source for sending dataset (source)."
@@ -1369,8 +1365,9 @@ function validate_restore() {
       log_debug "Parent dataset $(dataset_parent $DST_DATASET) exist."
       if dataset_encrypted true "$(dataset_parent $SRC_DATASET)"; then
         log_debug "... parent dataset is encrypted."
+        SRC_ENCRYPTED=true
         if [ "$DST_ENCRYPTED" == "true" ]; then
-          log_info "... source and destination dataset are encrypted, we decrypt data during restore."
+          log_info "... source parent and destination dataset are encrypted, we decrypt data during restore."
           DST_DECRYPT=true
         fi
       else
