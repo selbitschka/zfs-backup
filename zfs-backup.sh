@@ -190,6 +190,8 @@ Parameters
   --restore                      $RESTORE_HELP
   --restore-destroy              $RESTORE_DESTROY_HELP
 
+  --log-file       [file]        Logfile
+
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
   --version                      Print version.
@@ -408,6 +410,11 @@ function load_parameter() {
       ;;
     --restore-destroy)
       RESTORE_DESTROY=true
+      shift
+      ;;
+    --log-file)
+      LOG_FILE="$2"
+      shift
       shift
       ;;
     --version)
