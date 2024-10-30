@@ -763,16 +763,22 @@ function zfs_snapshot_send_cmd() {
     cmd="$cmd $SEND_PARAMETER"
   else
     cmd="$cmd $DEFAULT_SEND_PARAMETER"
-    if [ "$RESTORE" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
-      cmd="$cmd -p"
-    elif [ "$FIRST_RUN" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
-      cmd="$cmd -p"
-    fi
-    if [ "$SRC_ENCRYPTED" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
-      cmd="$cmd -w"
-    fi
-    if [ "$RECURSIVE" == "true" ]; then
-      cmd="$cmd -R"
+    if [ "$RESTORE" == "true" ]; then
+      if [ "$DST_ENCRYPTED" == "true" ] && [ "$DST_DECRYPT" == "false" ]; then
+        cmd="$cmd -w -p"
+      elif [ "$DST_ENCRYPTED" == "false" ]; then
+        cmd="$cmd -p"
+      fi
+    else
+      if [ "$FIRST_RUN" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
+        cmd="$cmd -p"
+      fi
+      if [ "$SRC_ENCRYPTED" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
+        cmd="$cmd -w"
+      fi
+      if [ "$RECURSIVE" == "true" ]; then
+        cmd="$cmd -R"
+      fi
     fi
   fi
   if [ -z "$2" ]; then
@@ -795,17 +801,23 @@ function zfs_snapshot_receive_cmd() {
   if [ -n "$RECEIVE_PARAMETER" ]; then
     cmd="$cmd $RECEIVE_PARAMETER"
   else
-    if [ "$RESTORE" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
-      cmd="$cmd -x encryption"
-    fi
-    if [ "$RESUME" == "true" ]; then
-      cmd="$cmd -s"
-    fi
-    if [ "$MOUNT" == "false" ]; then
-      cmd="$cmd -u"
-    fi
-    if [[ -z "$3" && ("$FIRST_RUN" == "true" || "$NO_OVERRIDE" == "false") ]]; then
-      cmd="$cmd -F"
+    if [ "$RESTORE" == "true" ]; then
+      if [ "$SRC_ENCRYPTED" == "true" ]; then
+        cmd="$cmd -x encryption"
+      fi
+      if [ "$RESTORE_DESTROY" == "true" ]; then
+        cmd="$cmd -F"
+      fi
+    else
+      if [ "$RESUME" == "true" ]; then
+        cmd="$cmd -s"
+      fi
+      if [ "$MOUNT" == "false" ]; then
+        cmd="$cmd -u"
+      fi
+      if [[ -z "$3" && ("$FIRST_RUN" == "true" || "$NO_OVERRIDE" == "false") ]]; then
+        cmd="$cmd -F"
+      fi
     fi
   fi
   cmd="$cmd $2"
@@ -1346,7 +1358,6 @@ function validate_restore() {
       stop $EXIT_ERROR
     elif [ "$RESTORE_DESTROY" == "true" ]; then
       log_info "... '$SRC_DATASET' exits and will be destroyed during restore."
-      NO_OVERRIDE=false
     else
       log_error "... '$SRC_DATASET' exits no restore possible. Please destroy dataset or use --restore-destroy to override existing data."
       stop $EXIT_ERROR
@@ -1370,10 +1381,6 @@ function validate_restore() {
       stop $EXIT_ERROR
     fi
   fi
-
-  # set source parameter to destination one for command build
-  SRC_ENCRYPTED="$DST_ENCRYPTED"
-  SRC_DECRYPT="$DST_DECRYPT"
 
   # check if destination snapshot exists
   load_dst_snapshots
