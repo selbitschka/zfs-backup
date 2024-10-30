@@ -763,7 +763,7 @@ function zfs_snapshot_send_cmd() {
     cmd="$cmd $SEND_PARAMETER"
   else
     cmd="$cmd $DEFAULT_SEND_PARAMETER"
-    if [ "$RESTORE" == "true" ]; then
+    if [ "$RESTORE" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
       cmd="$cmd -p"
     elif [ "$FIRST_RUN" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
       cmd="$cmd -p"
