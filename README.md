@@ -1,7 +1,7 @@
 # zfs-backup
-**PLEASE NOTE:** This script is in an early **BETA** stage. Use with care and not in production.
+**PLEASE NOTE:** This script is in **BETA** stage. Use with care and not in production.
 
-ZFS Backup is a bash base backup solution for ZFS, leveraging the ZFS command line tools `zfs` and `zpool`.
+ZFS Backup is a bash based backup solution for ZFS, leveraging the ZFS command line tools `zfs` and `zpool`.
 It supports transfer of encrypted datasets, resuming aborted streams, bookmarks and many more.
 
 The intention of this project is to create a simple to use backup solution for ZFS without other dependencies like
@@ -13,14 +13,14 @@ Single purpose is to back up your datasets to another machine or drive for disas
 At the moment it supports two kinds of source or targets 'local' and 'ssh', while only one can use 'ssh'.
 You can pull or push datasets from or to a remote machine as well as backup to a locally attached external drive.  
 ## Usage
-```console
+```shell
 Usage:
 ------
 zfs-backup -s pool/data -d pool/backup -dt ssh --ssh_host 192.168.1.1 --ssh_user backup ... [--help]
 zfs-backup -c configFile ... [--help]
 ```
 ## Help
-```console
+```shell
 Help:
 =====
 Parameters
@@ -30,7 +30,7 @@ Parameters
                                  If a config file ('-c') is use the output is written to that file.
 
   -s,  --src       [name]        Name of the sending dataset (source).
-  -st, --src-type  [ssh|local]   Type of source dataset: 'local' or 'local' (default: local).
+  -st, --src-type  [ssh|local]   Type of source dataset: 'local' or 'ssh' (default: local).
   -ss, --src-snaps [count]       Number (greater 0) of successful sent snapshots to keep on source side (default: 1).
   -d,  --dst       [name]        Name of the receiving dataset (destination).
   -dt, --dst-type  [ssh|local]   Type of destination dataset (default: 'local').
@@ -60,6 +60,9 @@ Parameters
   --post-run       [command]     Command or script to be executed after the this script is finished.
   --pre-snapshot   [command]     Command or script to be executed before snapshot is made (i.e. to lock databases).
   --post-snapshot  [command]     Command or script to be executed after snapshot is made.
+  
+  --restore                      Restore a previous made backup. Source and destination are switched and the lastest snapshot will be restored.
+  --restore-destroy              WARNING if this option is set option '-F' is used during receive and the existing dataset will be destroyed.
 
   -v,  --verbose                 Print executed commands and other debugging information.
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
@@ -95,38 +98,38 @@ require root permission. Furthermore, the current ZFS permission system does not
 destroy permissions for snapshots, so your backup user needs nearly full permission on datasets to back up.   
 
 On source (local machine) create a new user `zfsbackup` to perform the backups
-```console
+```shell
 sudo adduser --system --home /opt/zfs-backup --shell /bin/bash --group zfsbackup
 ```
 Download script to destination (i.e. `/opt/zfs-backup`) using git, wget, browser or the tool you like best 
-```console
+```shell
 cd /opt
 sudo -u zfsbackup git clone https://github.com/selbitschka/zfs-backup.git
 ```
 or
-```console
+```shell
 sudo su zfsbackup
 cd /opt/zfs-backup
 wget https://raw.githubusercontent.com/selbitschka/zfs-backup/master/zfs-backup.sh
 ```
 
 On target (192.168.1.1) create the same user
-```console
+```shell
 ssh user@192.168.1.1
 sudo useradd -m zfsbackup
 sudo passwd zfsbackup
 ```
 Create ssh key and copy it to target machine (as user `zfsbackup`)
-```console
+```shell
 sudo -u zfsbackup ssh-keygen
 sudo -u zfsbackup ssh-copy-id zfsbackup@192.168.1.1
 ```
 Test connection and accept key of target system (as user `zfsbackup`)
-```console
+```shell
 sudo -u zfsbackup ssh zfsbackup@192.168.1.1
 ```
 Create parent dataset on target (192.168.1.1) and give `zfsbackup` user required permissions to receive streams
-```console
+```shell
 ssh user@192.168.1.1
 sudo zfs create -o readonly=on -o canmount=off storage/zfsbackup
 sudo zfs allow -u zfsbackup compression,create,mount,receive storage/zfsbackup
@@ -139,7 +142,7 @@ Local+Descendent permissions:
 	user zfsbackup compression,create,mount,receive
 ```
 Allow user `zfsbackup` to perform backup tasks on source dataset `rpool/data` (local machine)
-```console
+```shell
 sudo zfs allow -u zfsbackup destroy,hold,release,send,snapshot rpool/data
 sudo zfs allow rpool/data
 ---- Permissions on rpool/data -------------------------
@@ -150,7 +153,7 @@ At the moment it is not possible to delegate only snapshot destroy permission. Y
 delete the dataset as well. Be aware of that!
 
 Test backup with `--dryrun` and `-v` option to see debug output
-```console
+```shell
 sudo -u zfsbackup ./zfs-backup.sh \
     -s rpool/data \
     -d storage/zfsbackup/data \
@@ -160,7 +163,7 @@ sudo -u zfsbackup ./zfs-backup.sh \
     -v
 ```
 You should see something like this
-```console
+```shell
 checking if source dataset 'rpool/data' exists ...
 executing: '/sbin/zfs list -H rpool/data'
 ... exits.
@@ -186,7 +189,7 @@ Since we have done a dryrun no snapshot was generated and `No snapshot found.` f
 If there were any ssh or dataset configuration problems you would have seen an error.
 
 Now you can generate a config for further use
-```console
+```shell
 sudo -u zfsbackup ./zfs-backup.sh \
     -s rpool/data \
     -d storage/zfsbackup/data \
@@ -196,11 +199,11 @@ sudo -u zfsbackup ./zfs-backup.sh \
     --config data_backup.config
 ```
 Now you can execute the backup with
-```console
+```shell
 sudo -u zfsbackup ./zfs-backup.sh -c data_backup.config
 ```
 of create a cronjob
-```console
+```shell
 * 12	* * *	zfsbackup    cd /opt/zfs-backup && ./zfs-backup.sh -c data_backup.config
 ```
 ## Planned features
@@ -212,7 +215,7 @@ Please feel free to [open a GitHub issue](https://github.com/selbitschka/zfs-bac
 ## License
 **MIT License**
 
-Copyright (c) 2020 Stefan Selbitschka
+Copyright (c) 2022 Stefan Selbitschka
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
