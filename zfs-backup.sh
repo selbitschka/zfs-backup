@@ -795,6 +795,9 @@ function zfs_snapshot_receive_cmd() {
   if [ -n "$RECEIVE_PARAMETER" ]; then
     cmd="$cmd $RECEIVE_PARAMETER"
   else
+    if [ "$RESTORE" == "true" ] && [ "$SRC_DECRYPT" == "false" ]; then
+      cmd="$cmd -x encryption"
+    fi
     if [ "$RESUME" == "true" ]; then
       cmd="$cmd -s"
     fi
