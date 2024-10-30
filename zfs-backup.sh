@@ -1260,6 +1260,11 @@ function validate_backup() {
 
 function validate_restore() {
   local exit_code
+  # these parameters are always false on restore
+  RECURSIVE=false
+  RESUME=false
+  FIRST_RUN=false
+
   if [ -z "$SRC_DATASET" ]; then
     log_error "Missing parameter -s | --source for sending dataset (source)."
     exit_code=$EXIT_MISSING_PARAM
@@ -1336,6 +1341,7 @@ function validate_restore() {
       stop $EXIT_ERROR
     elif [ "$RESTORE_DESTROY" == "true" ]; then
       log_info "... '$SRC_DATASET' exits and will be destroyed during restore."
+      NO_OVERRIDE=false
     else
       log_error "... '$SRC_DATASET' exits no restore possible. Please destroy dataset or use --restore-destroy to override existing data."
       stop $EXIT_ERROR
@@ -1359,6 +1365,10 @@ function validate_restore() {
       stop $EXIT_ERROR
     fi
   fi
+
+  # set source parameter to destination one for command build
+  SRC_ENCRYPTED="$DST_ENCRYPTED"
+  SRC_DECRYPT="$DST_DECRYPT"
 
   # check if destination snapshot exists
   load_dst_snapshots
@@ -1610,7 +1620,7 @@ function do_restore() {
   local cmd
   # sending snapshot
   log_info "restoring snapshot '$DST_SNAPSHOT_LAST' to '$SRC_DATASET' ..."
-  cmd="$(build_cmd "$DST_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD_REMOTE" "$DST_SNAPSHOT_LAST")") | $(build_cmd "$SRC_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD" "$SRC_DATASET")")"
+  cmd="$(build_cmd "$DST_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD_REMOTE" "" "$DST_SNAPSHOT_LAST")") | $(build_cmd "$SRC_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD" "$SRC_DATASET")")"
   if execute "$cmd"; then
     log_info "... finished restore of snapshot '$DST_SNAPSHOT_LAST' to '$SRC_DATASET'."
     log_info "... zfs-backup finished successful."
