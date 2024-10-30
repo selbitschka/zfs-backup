@@ -241,190 +241,192 @@ function help_permissions_receive() {
   log_debug "zfs allow -d -u $current_user canmount,destroy,hold,mountpoint,readonly,release $(dataset_parent $DST_DATASET)"
 }
 
-# read all parameters
-POSITIONAL=()
-while [[ $# -gt 0 ]]; do
-  key="$1"
-  case $key in
-  -c | --config)
-    CONFIG_FILE="$2"
-    shift
-    shift
-    ;;
-  --create-config)
-    MAKE_CONFIG=true
-    shift
-    ;;
-  -i | --id)
-    ID="${2:0:$ID_LENGTH}"
-    shift
-    shift
-    ;;
-  -s | --src)
-    SRC_DATASET="$2"
-    shift
-    shift
-    ;;
-  -st | --src-type)
-    SRC_TYPE="$2"
-    shift
-    shift
-    ;;
-  -ss | --src-snaps)
-    SRC_COUNT="$2"
-    shift
-    shift
-    ;;
-  -d | --dst)
-    DST_DATASET="$2"
-    shift
-    shift
-    ;;
-  -dt | --dst-type)
-    DST_TYPE="$2"
-    shift
-    shift
-    ;;
-  -ds | --dst-snaps)
-    DST_COUNT="$2"
-    shift
-    shift
-    ;;
-  -dp | --dst-prop)
-    DST_PROP="$2"
-    shift
-    shift
-    ;;
-  --send-param)
-    if [ "${2:0:1}" == "-" ]; then
-      SEND_PARAMETER="$2"
-    else
-      SEND_PARAMETER="-$2"
-    fi
-    shift
-    ;;
-  --recv-param)
-    if [ "${2:0:1}" == "-" ]; then
-      RECEIVE_PARAMETER="$2"
-    else
-      RECEIVE_PARAMETER="-$2"
-    fi
-    shift
-    ;;
-  --bookmark)
-    BOOKMARK=true
-    shift
-    ;;
-    #  --recursive)
-    #    RECURSIVE=true
-    #    shift
-    #    ;;
-  --resume)
-    RESUME=true
-    shift
-    ;;
-  --intermediary)
-    INTERMEDIATE=true
-    shift
-    ;;
-  --mount)
-    MOUNT=true
-    shift
-    ;;
-  --no-override)
-    NO_OVERRIDE=true
-    shift
-    ;;
-  --decrypt)
-    SRC_DECRYPT=true
-    shift
-    ;;
-  --no-holds)
-    NO_HOLD=true
-    shift
-    ;;
-  --only-if)
-    ONLY_IF="$2"
-    shift
-    shift
-    ;;
-  --pre-snapshot)
-    PRE_SNAPSHOT="$2"
-    shift
-    shift
-    ;;
-  --post-snapshot)
-    POST_SNAPSHOT="$2"
-    shift
-    shift
-    ;;
-  --pre-run)
-    PRE_RUN="$2"
-    shift
-    shift
-    ;;
-  --post-run)
-    POST_RUN="$2"
-    shift
-    shift
-    ;;
-  --ssh_host)
-    SSH_HOST="$2"
-    shift
-    shift
-    ;;
-  --ssh_port)
-    SSH_PORT="$2"
-    shift
-    shift
-    ;;
-  --ssh_user)
-    SSH_USER="$2"
-    shift
-    shift
-    ;;
-  --ssh_key)
-    SSH_KEY="$2"
-    shift
-    shift
-    ;;
-  --ssh_opt)
-    SSH_OPT="$2"
-    shift
-    shift
-    ;;
-  -v | --verbose)
-    DEBUG=true
-    shift
-    ;;
-  --dryrun)
-    DRYRUN=true
-    shift
-    ;;
-  --restore)
-    RESTORE=true
-    shift
-    ;;
-  --restore-destroy)
-    RESTORE_DESTROY=true
-    shift
-    ;;
-  --version)
-    echo "zfs-backup $VERSION"
-    exit $EXIT_OK
-    ;;
-  -h | --help)
-    usage
-    help
-    exit $EXIT_OK
-    ;;
-  *) # unknown option
-    POSITIONAL+=("$1") # save it in an array for later
-    shift              # past argument
-    ;;
-  esac
-done
-set -- "${POSITIONAL[@]}" # restore positional parameters
+function load_parameter() {
+  # read all parameters
+  POSITIONAL=()
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+    -c | --config)
+      CONFIG_FILE="$2"
+      shift
+      shift
+      ;;
+    --create-config)
+      MAKE_CONFIG=true
+      shift
+      ;;
+    -i | --id)
+      ID="${2:0:$ID_LENGTH}"
+      shift
+      shift
+      ;;
+    -s | --src)
+      SRC_DATASET="$2"
+      shift
+      shift
+      ;;
+    -st | --src-type)
+      SRC_TYPE="$2"
+      shift
+      shift
+      ;;
+    -ss | --src-snaps)
+      SRC_COUNT="$2"
+      shift
+      shift
+      ;;
+    -d | --dst)
+      DST_DATASET="$2"
+      shift
+      shift
+      ;;
+    -dt | --dst-type)
+      DST_TYPE="$2"
+      shift
+      shift
+      ;;
+    -ds | --dst-snaps)
+      DST_COUNT="$2"
+      shift
+      shift
+      ;;
+    -dp | --dst-prop)
+      DST_PROP="$2"
+      shift
+      shift
+      ;;
+    --send-param)
+      if [ "${2:0:1}" == "-" ]; then
+        SEND_PARAMETER="$2"
+      else
+        SEND_PARAMETER="-$2"
+      fi
+      shift
+      ;;
+    --recv-param)
+      if [ "${2:0:1}" == "-" ]; then
+        RECEIVE_PARAMETER="$2"
+      else
+        RECEIVE_PARAMETER="-$2"
+      fi
+      shift
+      ;;
+    --bookmark)
+      BOOKMARK=true
+      shift
+      ;;
+      #  --recursive)
+      #    RECURSIVE=true
+      #    shift
+      #    ;;
+    --resume)
+      RESUME=true
+      shift
+      ;;
+    --intermediary)
+      INTERMEDIATE=true
+      shift
+      ;;
+    --mount)
+      MOUNT=true
+      shift
+      ;;
+    --no-override)
+      NO_OVERRIDE=true
+      shift
+      ;;
+    --decrypt)
+      SRC_DECRYPT=true
+      shift
+      ;;
+    --no-holds)
+      NO_HOLD=true
+      shift
+      ;;
+    --only-if)
+      ONLY_IF="$2"
+      shift
+      shift
+      ;;
+    --pre-snapshot)
+      PRE_SNAPSHOT="$2"
+      shift
+      shift
+      ;;
+    --post-snapshot)
+      POST_SNAPSHOT="$2"
+      shift
+      shift
+      ;;
+    --pre-run)
+      PRE_RUN="$2"
+      shift
+      shift
+      ;;
+    --post-run)
+      POST_RUN="$2"
+      shift
+      shift
+      ;;
+    --ssh_host)
+      SSH_HOST="$2"
+      shift
+      shift
+      ;;
+    --ssh_port)
+      SSH_PORT="$2"
+      shift
+      shift
+      ;;
+    --ssh_user)
+      SSH_USER="$2"
+      shift
+      shift
+      ;;
+    --ssh_key)
+      SSH_KEY="$2"
+      shift
+      shift
+      ;;
+    --ssh_opt)
+      SSH_OPT="$2"
+      shift
+      shift
+      ;;
+    -v | --verbose)
+      DEBUG=true
+      shift
+      ;;
+    --dryrun)
+      DRYRUN=true
+      shift
+      ;;
+    --restore)
+      RESTORE=true
+      shift
+      ;;
+    --restore-destroy)
+      RESTORE_DESTROY=true
+      shift
+      ;;
+    --version)
+      echo "zfs-backup $VERSION"
+      exit $EXIT_OK
+      ;;
+    -h | --help)
+      usage
+      help
+      exit $EXIT_OK
+      ;;
+    *) # unknown option
+      POSITIONAL+=("$1") # save it in an array for later
+      shift              # past argument
+      ;;
+    esac
+  done
+  set -- "${POSITIONAL[@]}" # restore positional parameters
+}
 
 # print log output
 # $1 log message, $2 severity pattern
@@ -1766,7 +1768,9 @@ function stop() {
 }
 
 # main function calls
+load_parameter "$@"
 load_config
+load_parameter "$@"
 start_backup
 distro_dependent_commands
 if [ "$RESTORE" == "true" ]; then
