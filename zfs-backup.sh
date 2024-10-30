@@ -131,6 +131,8 @@ readonly POST_SNAPSHOT_HELP="Command or script to be executed after snapshot is 
 readonly RESTORE_HELP="Restore a previous made backup. Source and destination are switched and the lastest snapshot will be restored."
 readonly RESTORE_DESTROY_HELP="WARNING if this option is set option '-F' is used during receive and the existing dataset will be destroyed."
 
+readonly RECURSIVE_HELP="Create and send recursive. Use '-r' during snapshot generation and '-Rp' during send."
+
 usage() {
   local usage
   usage="zfs-backup Version $VERSION
@@ -192,6 +194,8 @@ Parameters
 
   --log-file       [file]        Logfile
 
+  --recursive                    $RECURSIVE_HELP
+
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
   --version                      Print version.
@@ -212,9 +216,7 @@ If you use type 'ssh' you need to specify Host, Port, etc.
 
 Help
 ----
-  -h,  --help              Print this message."
-
-  # --recursive                    Create and send recursive. Use '-r' during snapshot generation and '-Rp' during send.
+  -h,  --help                    Print this message."
   echo "$help"
 }
 
@@ -318,10 +320,10 @@ function load_parameter() {
       BOOKMARK=true
       shift
       ;;
-      #  --recursive)
-      #    RECURSIVE=true
-      #    shift
-      #    ;;
+    --recursive)
+      RECURSIVE=true
+      shift
+      ;;
     --resume)
       RESUME=true
       shift
