@@ -1502,7 +1502,7 @@ function do_backup() {
     if [ "$SRC_TYPE" == "$TYPE_SSH" ]; then
       log_info "You can use 'mbuffer' only for local source, disabling it."
     elif [ -n "$MBUFFER_CMD" ]; then
-      mbuffer_cmd="| $MBUFFER_CMD -s $MBUFFER_S -m $MBUFFER_M"
+      mbuffer_cmd="| $MBUFFER_CMD -s $MBUFFER_S -m $MBUFFER_M -q"
     else
       log_warn "Command 'mbuffer' not defined on source system but --mbuffer is used. Maybe mbuffer is not installed. Parameter will be ignored."
     fi
