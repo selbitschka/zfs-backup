@@ -1108,7 +1108,6 @@ function distro_dependent_commands() {
   local zfs_path
   local distro
   local release
-  local mbuffer
 
   if [ -z "$SSH_CMD" ]; then
     SSH_CMD=$(command -v ssh)
