@@ -1170,14 +1170,8 @@ function distro_dependent_commands() {
     [ -z "$ZPOOL_CMD_REMOTE" ] && ZPOOL_CMD_REMOTE="${zfs_path}zpool"
   fi
 
-  if [ -z "$MBUFFER_CMD" ]; then
-    cmd="$(build_cmd $SRC_TYPE "command -v mbuffer")"
-    echo "$cmd"
-    log_debug "determining mbuffer commands ..."
-    mbuffer=$($(build_cmd $SRC_TYPE "command -v mbuffer"))
-    if [ -n "$mbuffer" ]; then
-      MBUFFER_CMD="$mbuffer"
-    fi
+  if [ -z "$MBUFFER_CMD" ] && [ "$MBUFFER" == "true" ]; then
+    MBUFFER_CMD=$(command -v mbuffer)
   fi
 }
 
@@ -1506,7 +1500,9 @@ function do_backup() {
 
   mbuffer_cmd=""
   if [ "$MBUFFER" == "true" ]; then
-    if [ -n "$MBUFFER_CMD" ]; then
+    if [ "$SRC_TYPE" == "$TYPE_SSH" ]; then
+      log_info "You can use 'mbuffer' only for local source, disabling it."
+    elif [ -n "$MBUFFER_CMD" ]; then
       mbuffer_cmd="| $MBUFFER_CMD -s $MBUFFER_S -m $MBUFFER_M"
     else
       log_warn "Command 'mbuffer' not defined on source system but --mbuffer is used. Maybe mbuffer is not installed. Parameter will be ignored."
