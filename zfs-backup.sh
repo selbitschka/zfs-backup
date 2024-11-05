@@ -387,8 +387,7 @@ function load_parameter() {
       shift
       ;;
     --mbuffer)
-      MBUFFER="$2"
-      shift
+      MBUFFER=true
       shift
       ;;
     --mbuffer-s)
@@ -1174,7 +1173,7 @@ function distro_dependent_commands() {
   if [ -z "$MBUFFER_CMD" ]; then
     cmd="$(build_cmd $SRC_TYPE "command -v mbuffer")"
     echo "$cmd"
-    log_debug "determining source commands ..."
+    log_debug "determining mbuffer commands ..."
     mbuffer=$($(build_cmd $SRC_TYPE "command -v mbuffer"))
     if [ -n "$mbuffer" ]; then
       MBUFFER_CMD="$mbuffer"
