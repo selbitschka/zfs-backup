@@ -205,9 +205,9 @@ Parameters
 
   --recursive                    $RECURSIVE_HELP
 
-  --mbuffer
-  --mbuffer-s
-  --mbuffer-m
+  --mbuffer                      $MBUFFER_HELP
+  --mbuffer-s                    $MBUFFER_S_HELP
+  --mbuffer-m                    $MBUFFER_M_HELP
 
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
@@ -383,6 +383,21 @@ function load_parameter() {
       ;;
     --post-run)
       POST_RUN="$2"
+      shift
+      shift
+      ;;
+    --mbuffer)
+      MBUFFER="$2"
+      shift
+      shift
+      ;;
+    --mbuffer-s)
+      MBUFFER_S="$2"
+      shift
+      shift
+      ;;
+    --mbuffer-m)
+      MBUFFER_M="$2"
       shift
       shift
       ;;
