@@ -2,7 +2,7 @@
 # shellcheck disable=SC2091
 # shellcheck disable=SC2086
 
-readonly VERSION='0.9.5'
+readonly VERSION='0.9.6'
 
 # return codes
 readonly EXIT_OK=0
@@ -22,6 +22,7 @@ SSH_CMD=
 MD5SUM_CMD=
 ZFS_CMD_REMOTE=
 ZPOOL_CMD_REMOTE=
+MBUFFER_CMD=
 
 # defaults
 CONFIG_FILE=
@@ -94,6 +95,10 @@ EXECUTION_ERROR=false
 RESTORE=false
 RESTORE_DESTROY=false
 
+MBUFFER=false
+MBUFFER_S=128K
+MBUFFER_M=1G
+
 # help text
 readonly SRC_DATASET_HELP="Name of the sending dataset (source)."
 readonly SRC_TYPE_HELP="Type of source dataset: '$TYPE_LOCAL' or '$TYPE_SSH' (default: local)."
@@ -132,6 +137,10 @@ readonly RESTORE_HELP="Restore a previous made backup. Source and destination ar
 readonly RESTORE_DESTROY_HELP="WARNING if this option is set option '-F' is used during receive and the existing dataset will be destroyed."
 
 readonly RECURSIVE_HELP="Create and send recursive. Use '-r' during snapshot generation and '-Rp' during send."
+
+readonly MBUFFER_HELP="Use mbuffer on source side to buffer output."
+readonly MBUFFER_S_HELP="-s parameter of mbuffer command (default: 128K)."
+readonly MBUFFER_M_HELP="-m parameter of mbuffer command (default: 1G)."
 
 usage() {
   local usage
@@ -195,6 +204,10 @@ Parameters
   --log-file       [file]        Logfile
 
   --recursive                    $RECURSIVE_HELP
+
+  --mbuffer
+  --mbuffer-s
+  --mbuffer-m
 
   -v,  --verbose                 $DEBUG_HELP
   --dryrun                       Do check inputs, dataset existence,... but do not create or destroy snapshot or transfer data.
@@ -1081,6 +1094,7 @@ function distro_dependent_commands() {
   local zfs_path
   local distro
   local release
+  local mbuffer
 
   if [ -z "$SSH_CMD" ]; then
     SSH_CMD=$(command -v ssh)
@@ -1140,6 +1154,16 @@ function distro_dependent_commands() {
 
     [ -z "$ZFS_CMD_REMOTE" ] && ZFS_CMD_REMOTE="${zfs_path}zfs"
     [ -z "$ZPOOL_CMD_REMOTE" ] && ZPOOL_CMD_REMOTE="${zfs_path}zpool"
+  fi
+
+  if [ -z "$MBUFFER_CMD" ]; then
+    cmd="$(build_cmd $SRC_TYPE "command -v mbuffer")"
+    echo "$cmd"
+    log_debug "determining source commands ..."
+    mbuffer=$($(build_cmd $SRC_TYPE "command -v mbuffer"))
+    if [ -n "$mbuffer" ]; then
+      MBUFFER_CMD="$mbuffer"
+    fi
   fi
 }
 
@@ -1464,6 +1488,16 @@ function load_dst_snapshots() {
 
 function do_backup() {
   local cmd
+  local mbuffer_cmd
+
+  mbuffer_cmd=""
+  if [ "$MBUFFER" == "true" ]; then
+    if [ -n "$MBUFFER_CMD" ]; then
+      mbuffer_cmd="| $MBUFFER_CMD -s $MBUFFER_S -m $MBUFFER_M"
+    else
+      log_warn "Command 'mbuffer' not defined on source system but --mbuffer is used. Maybe mbuffer is not installed. Parameter will be ignored."
+    fi
+  fi
 
   # looking for resume token and resume previous aborted sync if necessary
   if [ "$FIRST_RUN" == "false" ] && [ "$RESUME" == "true" ]; then
@@ -1472,7 +1506,7 @@ function do_backup() {
     resume_token=$(dataset_resume_token)
     if [ "$resume_token" != "-" ]; then
       log_info "... resuming previous aborted sync with token '${resume_token:0:20}' ..."
-      cmd="$(build_cmd "$SRC_TYPE" "$(zfs_resume_send_cmd "$ZFS_CMD" "$resume_token")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET" "true")")"
+      cmd="$(build_cmd "$SRC_TYPE" "$(zfs_resume_send_cmd "$ZFS_CMD" "$resume_token")") $mbuffer_cmd | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET" "true")")"
       if execute "$cmd"; then
         log_info "... finished previous sync."
         # reload destination snapshots to get last
@@ -1536,7 +1570,7 @@ function do_backup() {
 
   # sending snapshot
   log_info "sending snapshot ..."
-  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$SRC_SNAPSHOT_LAST_SYNCED" "$SRC_SNAPSHOT_LAST")") | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
+  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_send_cmd "$ZFS_CMD" "$SRC_SNAPSHOT_LAST_SYNCED" "$SRC_SNAPSHOT_LAST")") $mbuffer_cmd | $(build_cmd "$DST_TYPE" "$(zfs_snapshot_receive_cmd "$ZFS_CMD_REMOTE" "$DST_DATASET")")"
   if execute "$cmd"; then
     if [ "$FIRST_RUN" == "true" ]; then
       [ -n "$DST_PROP" ] && log_info "setting properties at destination ... "
@@ -1656,6 +1690,7 @@ SSH_CMD=$SSH_CMD
 MD5SUM_CMD=$MD5SUM_CMD
 ZFS_CMD_REMOTE=$ZFS_CMD_REMOTE
 ZPOOL_CMD_REMOTE=$ZFS_CMD_REMOTE
+MBUFFER_CMD=$MBUFFER_CMD
 
 # Unique id of target system for example 'nas' of 'home'
 # This id is used to separate backups of the same source
@@ -1687,6 +1722,13 @@ DST_COUNT=$DST_COUNT
 # ${DST_PROP_HELP[1]}
 # ${DST_PROP_HELP[2]}
 DST_PROP=$DST_PROP
+
+# $MBUFFER_HELP
+MBUFFER=$MBUFFER
+# $MBUFFER_S_HELP
+MBUFFER_S=$MBUFFER_S
+# $MBUFFER_M_HELP
+MBUFFER_S=$MBUFFER_M
 
 # Snapshot pre-/postfix and hold tag
 #SNAPSHOT_PREFIX=\"bkp\"
