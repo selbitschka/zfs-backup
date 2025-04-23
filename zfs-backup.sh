@@ -2,7 +2,7 @@
 # shellcheck disable=SC2091
 # shellcheck disable=SC2086
 
-readonly VERSION='0.9.6'
+readonly VERSION='0.9.7'
 
 # return codes
 readonly EXIT_OK=0
@@ -35,6 +35,7 @@ LOG_ERROR="[ERROR]"
 LOG_CMD="[COMMAND]"
 SNAPSHOT_PREFIX="bkp"
 SNAPSHOT_HOLD_TAG="zfsbackup"
+SNAPSHOT_CREATE=true
 
 # datasets
 ID=
@@ -142,6 +143,8 @@ readonly MBUFFER_HELP="Use mbuffer on source side to buffer output."
 readonly MBUFFER_S_HELP="-s parameter of mbuffer command (default: 128K)."
 readonly MBUFFER_M_HELP="-m parameter of mbuffer command (default: 1G)."
 
+readonly NO_SNAPSHOT_CREATE_HELP="No snapshot is created, only existing snapshots are processed."
+
 usage() {
   local usage
   usage="zfs-backup Version $VERSION
@@ -197,6 +200,8 @@ Parameters
   --post-run       [command]     $POST_RUN_HELP
   --pre-snapshot   [command]     $PRE_SNAPSHOT_HELP
   --post-snapshot  [command]     $POST_SNAPSHOT_HELP
+
+  --no-snapshot                  $NO_SNAPSHOT_CREATE_HELP
 
   --restore                      $RESTORE_HELP
   --restore-destroy              $RESTORE_DESTROY_HELP
@@ -384,6 +389,10 @@ function load_parameter() {
     --post-run)
       POST_RUN="$2"
       shift
+      shift
+      ;;
+    --no-snapshot)
+      SNAPSHOT_CREATE=false
       shift
       ;;
     --mbuffer)
@@ -1532,25 +1541,29 @@ function do_backup() {
     fi
   fi
 
-  # create snapshot
-  if [ -n "$PRE_SNAPSHOT" ]; then
-    if ! execute "$PRE_SNAPSHOT"; then
-      log_error "Error executing pre snapshot command/script ..."
+  if [ "$SNAPSHOT_CREATE" = "true" ]; then
+    # create snapshot
+    if [ -n "$PRE_SNAPSHOT" ]; then
+      if ! execute "$PRE_SNAPSHOT"; then
+        log_error "Error executing pre snapshot command/script ..."
+        stop $EXIT_ERROR
+      fi
+    fi
+    cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_create_cmd "$ZFS_CMD" "$SRC_DATASET")")"
+    log_info "Creating new snapshot for sync ..."
+    if ! execute "$cmd"; then
+      log_error "Error creating new snapshot."
+      [ "$FIRST_RUN" == "true" ] && help_permissions_send
       stop $EXIT_ERROR
     fi
-  fi
-  cmd="$(build_cmd "$SRC_TYPE" "$(zfs_snapshot_create_cmd "$ZFS_CMD" "$SRC_DATASET")")"
-  log_info "Creating new snapshot for sync ..."
-  if ! execute "$cmd"; then
-    log_error "Error creating new snapshot."
-    [ "$FIRST_RUN" == "true" ] && help_permissions_send
-    stop $EXIT_ERROR
-  fi
-  if [ -n "$POST_SNAPSHOT" ]; then
-    if ! execute "$POST_SNAPSHOT"; then
-      log_error "Error executing post snapshot command/script ..."
-      EXECUTION_ERROR=true
+    if [ -n "$POST_SNAPSHOT" ]; then
+      if ! execute "$POST_SNAPSHOT"; then
+        log_error "Error executing post snapshot command/script ..."
+        EXECUTION_ERROR=true
+      fi
     fi
+  else
+    log_info "No snapshot is created only existing are synced."
   fi
   # reload source snapshots to get last
   load_src_snapshots
@@ -1573,6 +1586,9 @@ function do_backup() {
   if [ -z "$SRC_SNAPSHOT_LAST_SYNCED" ]; then
     log_info "No synced snapshot or bookmark found."
     log_info "Using newest snapshot '$SRC_SNAPSHOT_LAST' for initial sync ..."
+  elif [ "$SRC_SNAPSHOT_LAST_SYNCED" = "$SRC_SNAPSHOT_LAST" ]; then
+    log_info "Last synced snapshot '$SRC_SNAPSHOT_LAST_SYNCED' is last source snapshot, nothing to sync - exiting."
+    stop $EXIT_OK
   else
     log_info "Using last synced snapshot '$SRC_SNAPSHOT_LAST_SYNCED' for incremental sync ..."
   fi
